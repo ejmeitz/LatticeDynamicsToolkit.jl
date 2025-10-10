@@ -61,3 +61,87 @@ end
 function remap(ifc4::IFCs{4,T}, nl, ss_to_uc_map) where T
 
 end
+
+
+"""
+    map_super_to_unitcell(
+        L_uc, L_sc,
+        x_frac_uc::AbstractVector{<:SVector{3,T}},
+        x_frac_sc::AbstractVector{<:SVector{3,T}};
+        species_uc=nothing, species_sc=nothing,
+        tol::Real=1e-3,
+    ) -> (s2u::Vector{Int}, translations::Vector{SVector{3,Int}})
+
+Map each supercell atom → its unit-cell atom (index) and unit-cell translation (i,j,k).
+Distances are computed in Å using the unit-cell lattice `L_uc`.
+- `L_uc`, `L_sc`: 3×3 with **columns** a,b,c (Cartesian, Å)
+- `x_frac_uc`, `x_frac_sc`: vectors of SVector{3} fractional coords
+- `tol` is in **Å** (e.g., 1e-3–1e-2 Å for slightly relaxed structures)
+"""
+function map_super_to_unitcell(
+        L_uc::AbstractMatrix{T},
+        L_sc::AbstractMatrix{T},
+        x_frac_uc::AbstractVector{<:SVector{3,T}},
+        x_frac_sc::AbstractVector{<:SVector{3,T}};
+        species_uc::Union{Nothing,AbstractVector}=nothing,
+        species_sc::Union{Nothing,AbstractVector}=nothing,
+        tol::Real=1e-3,
+    ) where {T <: AbstractFloat}
+
+    @assert size(L_uc) == (3,3) && size(L_sc) == (3,3)
+    n_uc = length(x_frac_uc)
+    n_sc = length(x_frac_sc)
+    if (species_uc !== nothing) || (species_sc !== nothing)
+        @assert species_uc !== nothing && species_sc !== nothing "Provide both species arrays."
+        @assert length(species_uc) == n_uc && length(species_sc) == n_sc
+    end
+
+    # PBC wrap to [-0.5, 0.5) per component in fractional space
+    pbc_wrap(d::SVector{3,T}) = d .- round.(d)
+
+    s2u = zeros(Int, n_sc)
+    # translations = Vector{SVector{3,Int}}(undef, n_sc)
+
+    f_uc_raw = MVector{3, T}(0,0,0)
+    f_red = MVector{3, T}(0,0,0)
+    d_frac =  MVector{3, T}(0,0,0)
+    d_cart = MVector{3, T}(0,0,0)
+
+    M = inv(L_uc) * L_sc
+    tol_sq = tol*tol
+
+    @inbounds for j in 1:n_sc
+        # Cartesian → uc frac (not reduced)
+        mul!(f_uc_raw, M, x_frac_sc[j])
+        # reduce to [0,1)
+        f_red .= f_uc_raw .- floor.(f_uc_raw)
+
+        #Δ     = f_uc_raw - f_red
+        # t_ijk = SVector{3,Int}(round.(Int, Δ))  # translation in uc basis
+
+        # nearest match in Å using uc lattice: distance = ‖L_uc * wrap(frac_diff)‖2
+        best_i, best_d_sq = 0, T(Inf)
+        for i in 1:n_uc
+            if species_uc !== nothing
+                species_uc[i] == species_sc[j] || continue
+            end
+            d_frac .= pbc_wrap(x_frac_uc[i] - f_red)
+            mul!(d_cart, L_uc, d_frac)
+            d_sq = dot(d_cart, d_cart)
+            if d_sq < best_d_sq
+                best_d_sq = d_sq
+                best_i = i
+            end
+        end
+
+        if !(best_i != 0 && best_d_sq ≤ tol_sq)
+            throw(error("No unit-cell match within tol for supercell atom $j (best_d=$(sqrt(best_d)) Å)"))
+        end
+        
+        s2u[j] = best_i
+        # translations[j] = t_ijk
+    end
+
+    return s2u#, translations
+end
+

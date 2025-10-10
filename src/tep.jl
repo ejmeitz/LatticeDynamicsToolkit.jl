@@ -91,6 +91,7 @@ function energies_faithful(
 end
 
 #! TRY LOOP VECTORIZATION??
+#! Try storing IFCs as Tensorial types and using their einsum macros??
 function energies_optimized(
         u::AbstractVector{SVector{3,T}},
         fc2::IFCs{2,T};
@@ -127,7 +128,7 @@ function energies_optimized(
         v0 .= T(0.0)
         for pair in get_interactions(fc2, a1) # each pair is SVector{N, FC2Data{T}}
             a2  = pair.idxs[2]
-            v0 -= pair.ifcs * u[a2]
+            v0 += pair.ifcs * u[a2]
         end
         e2_local += dot(u[a1], v0)
 
@@ -139,8 +140,9 @@ function energies_optimized(
                 a2 = trip.idxs[2]; u2 = u[a2]
                 a3 = trip.idxs[3]; u3 = u[a3]
 
+                #! use some einsum thing: V[i] = M[i, j, k] * u2[j] * u3[k]
                 @inbounds for i1 in 1:3, i2 in 1:3, i3 in 1:3
-                    v0[i1] -= trip.ifcs[i1,i2,i3] * u2[i2] * u3[i3]
+                    v0[i1] += trip.ifcs[i1,i2,i3] * u2[i2] * u3[i3]
                 end
             end
             e3_local += dot(v0, u1)
@@ -155,8 +157,9 @@ function energies_optimized(
                 a3 = quat.idxs[3]; u3 = u[a3]
                 a4 = quat.idxs[4]; u4 = u[a4]
 
+                #! use some einsum thing: V[i] = M[i, j, k, l] * u2[j] * u3[k] * u4[l]
                 @inbounds for i1 in 1:3, i2 in 1:3, i3 in 1:3, i4 in 1:3
-                    v0[i1] -= quat.ifcs[i1,i2,i3,i4] * u2[i2] * u3[i3] * u4[i4]
+                    v0[i1] += quat.ifcs[i1,i2,i3,i4] * u2[i2] * u3[i3] * u4[i4]
                 end
             end
             e4_local += dot(v0, u1)
@@ -165,9 +168,9 @@ function energies_optimized(
         (e2_local, e3_local, e4_local)
     end
 
-    e2 *= T(-0.5)
-    e3 /= T(-6)
-    e4 /= T(-24)
+    e2 *= T(0.5)
+    e3 /= T(6)
+    e4 /= T(24)
 
     return e2, e3, e4
 end
