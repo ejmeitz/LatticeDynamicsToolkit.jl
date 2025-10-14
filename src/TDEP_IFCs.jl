@@ -6,6 +6,7 @@ using CellListMaps
 using Spglib
 using OhMyThreads
 
+include("util.jl")
 include("types.jl")
 include("io.jl")
 include("remap.jl")

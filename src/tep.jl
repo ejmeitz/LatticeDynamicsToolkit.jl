@@ -1,4 +1,4 @@
-export energy_and_forces
+export energies
 
 """
     energies_and_forces_taylor(u, fc2; fc3=nothing, fc4=nothing)

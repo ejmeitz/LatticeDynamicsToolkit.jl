@@ -59,3 +59,22 @@ end
 get_interactions(data::IFCs{2}, i::Int) = data.atoms[i].pairs 
 get_interactions(data::IFCs{3}, i::Int) = data.atoms[i].triplets 
 get_interactions(data::IFCs{4}, i::Int) = data.atoms[i].quartets 
+
+
+#######################
+
+struct DistanceTableAtom{T,N}
+    central_atom::Int
+    # Vector from current center atom to other particle
+    vs::SVector{N,SVector{3,T}}
+    # Vector from current cetner atom to other particle with pbc accounted for
+    lvs::SVector{N,SVector{3,T}}
+    inds::SVector{N, Int}
+    dists::SVector{N, T}
+end
+
+n_neighbors(::DistanceTable{<:Any,N}) where N = N
+
+struct DistanceTable{T}
+    atoms::AbstractVector{<:DistanceTableAtom{T}}
+end

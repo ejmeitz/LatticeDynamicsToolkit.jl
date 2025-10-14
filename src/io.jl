@@ -1,13 +1,5 @@
-export read_fc2
+export read_ifc2, read_ifc3, read_ifc4
 
-# Helper functions
-readline_skip_text!(io, T) = parse(T, first(split(strip(readline(io)))))
-
-function read_vec3!(io, T)
-    xs = split(strip(readline(io)))
-    @assert length(xs) == 3 "Expected 3 components for a 3-vector."
-    SVector{3,T}(parse.(T, xs))
-end
 
 """
     read_ifc2(path, R_frac, A) -> IFCs{2, T}
