@@ -5,7 +5,7 @@ abstract type AtomFC{O,T,N} end
 
 # mimics the lo_fc2_pair type
 struct FC2Data{T} <: FCData{2,T}
-    idxs::SVector{2, Int}
+    idxs::SVector{2, Int} # indices in unitcell
     lvs::SVector{2, SVector{3, T}} # lattice vectors for the unit cell these atoms belong to
     r::SVector{3, T} # vector between atom 1 and 2
     ifcs::SMatrix{3, 3, T}
@@ -13,7 +13,7 @@ end
 
 # mimics the lo_fc3_triplet type
 struct FC3Data{T} <: FCData{3,T}
-    idxs::SVector{3, Int}
+    idxs::SVector{3, Int} # indices in unitcell
     lvs::SVector{3, SVector{3, T}}
     rv1::SVector{3, T}
     rv2::SVector{3, T}
@@ -22,7 +22,7 @@ struct FC3Data{T} <: FCData{3,T}
 end
 
 struct FC4Data{T} <: FCData{4,T}
-    idxs::SVector{4, Int}
+    idxs::SVector{4, Int} # indices in unitcell
     lvs::SVector{4, SVector{3, T}}
     rv1::SVector{3, T}
     rv2::SVector{3, T}
@@ -69,11 +69,13 @@ struct DistanceTableAtom{T,N}
     vs::SVector{N,SVector{3,T}}
     # Vector from current cetner atom to other particle with pbc accounted for
     lvs::SVector{N,SVector{3,T}}
+    # image flags
+    ns::SVector{N, SVector{3, Int16}}
     inds::SVector{N, Int}
     dists::SVector{N, T}
 end
 
-n_neighbors(::DistanceTable{<:Any,N}) where N = N
+n_neighbors(::DistanceTableAtom{<:Any,N}) where N = N
 
 struct DistanceTable{T}
     atoms::AbstractVector{<:DistanceTableAtom{T}}

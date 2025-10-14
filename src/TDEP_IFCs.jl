@@ -2,12 +2,12 @@ module TDEP_IFCs
 
 using LinearAlgebra
 using StaticArrays
-using CellListMaps
-using Spglib
+using CellListMap
 using OhMyThreads
 
 include("util.jl")
 include("types.jl")
+include("distance_table.jl")
 include("io.jl")
 include("remap.jl")
 include("tep.jl")

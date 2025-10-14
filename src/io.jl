@@ -1,8 +1,88 @@
 export read_ifc2, read_ifc3, read_ifc4
 
 
+function read_poscar_cell(path; n_atoms = nothing)
+
+    cell = zeros(Float64, 3, 3)
+
+    open(path, "r") do f
+        readline(f)
+        scale = parse(Float64, readline(f))
+        lv1 = scale .* parse.(Float64, split(strip(readline(f))))
+        lv2 = scale .* parse.(Float64, split(strip(readline(f))))
+        lv3 = scale .* parse.(Float64, split(strip(readline(f))))
+
+        cell .= hcat(lv1, lv2, lv3) # cell vecs as columns
+
+        readline(f) # skip species line
+
+        natoms_file = sum(parse.(Int, split(strip(readline(f)))))
+        if !isnothing(n_atoms) && natoms_file != n_atoms
+            error(ArgumentError("Poscar has $(natoms_file) but you told me it would have $(natoms)"))
+        end
+        n_atoms = natoms_file
+
+    end
+
+    return cell, n_atoms
+
+end
+
+function read_poscar_positions!(positions::Vector{SVector{3,T}}, path;
+                                n_atoms = nothing, 
+                                ssposcar_is_frac::Bool = true,
+                                store_frac_coords::Bool = false) where T
+
+    cell, n_atoms = read_poscar_cell(path; n_atoms = n_atoms)
+
+    convert_to_cart = (!store_frac_coords && ssposcar_is_frac)
+
+    if convert_to_cart
+        parse_line = (line) -> SVector(cell * parse.(T, split(strip(line))[1:3])...)
+    else
+        parse_line = (line) -> SVector(parse.(T, split(strip(line))[1:3])...)
+    end
+
+    open(path, "r") do f
+        readline(f)
+        readline(f)
+        readline(f)
+        readline(f)
+        readline(f)
+        readline(f) # skip species line
+        readline(f) # natoms line
+        readline(f) # skip "direct coordinates" line
+
+        for i in 1:n_atoms
+            positions[i] = parse_line(readline(f))
+        end
+    end
+
+    return positions, cell
+
+end
+
+# Just reads the positions and cell from POSCAR
+function read_poscar_data(path; n_atoms = nothing,
+                                ssposcar_is_frac::Bool = true,
+                                store_frac_coords::Bool = true)
+
+                                
+    cell, n_atoms = read_poscar_cell(path; n_atoms = n_atoms)
+
+    positions = zeros(SVector{3, Float64}, n_atoms)
+
+    return read_poscar_positions!(positions, path;
+                                    n_atoms = n_atoms, 
+                                    ssposcar_is_frac = ssposcar_is_frac,
+                                    store_frac_coords = store_frac_coords)
+
+end
+
+
 """
-    read_ifc2(path, R_frac, A) -> IFCs{2, T}
+    read_ifc2(ifc2_path, ucposcar_path)
+    read_ifc2(path, r_frac_uc, L_uc) -> IFCs{2, T}
 
 Read a 2nd-order outfile.forceconstant from TDEP. This follows the logic implemented in TDEP.
 Does NOT handle polar force constants.
@@ -10,13 +90,20 @@ Does NOT handle polar force constants.
 Inputs
 - `path::AbstractString`: file path
 - `r_frac_uc::AbstractVector{SVector{3,T}}`: 3×na fractional coords of atoms in the unitcell
-- `A::AbstractMatrix{T}`: 3×3 lattice (columns are lattice vectors), Cartesian = A * fractional
+- `L_uc::AbstractMatrix{T}`: 3×3 lattice (columns are lattice vectors), Cartesian = A * fractional
 
 """
-function read_ifc2(path::AbstractString,
-                        r_frac_uc::AbstractVector{SVector{3,T}},
-                        A::AbstractMatrix{T};
-                        chop_tol::T = T(1e-13)) where {T<:Real}
+function read_ifc2(ifc2_path::AbstractString, ucposcar_path::AbstractString)
+    x_frac_uc, L_uc = read_poscar_data(ucposcar_path)
+    return read_ifc2(ifc2_path, x_frac_uc, L_uc)
+end
+
+function read_ifc2(
+        path::AbstractString,
+        r_frac_uc::AbstractVector{SVector{3,T}},
+        L_uc::AbstractMatrix{T};
+        chop_tol::T = T(1e-13)
+    ) where {T<:Real}
 
     
     function read_mat3_rows!(io) 
@@ -29,7 +116,7 @@ function read_ifc2(path::AbstractString,
 
     chop3(v::SVector{3,T}) = SVector{3,T}(ntuple(i->(abs(v[i]) < chop_tol ? zero(T) : v[i]), 3))
 
-    @assert size(A) == (3,3) "Lattice A must be 3×3."
+    @assert size(L_uc) == (3,3) "Lattice A must be 3×3."
 
     max_rcut = zero(T)
 
@@ -60,9 +147,9 @@ function read_ifc2(path::AbstractString,
                 v2_frac = lv2_frac + SVector{3,T}(r_frac_uc[a2])
 
                 # Convert to Cartesian
-                lv1_cart = SVector{3,T}(A * lv1_frac)
-                lv2_cart = SVector{3,T}(A * lv2_frac)
-                r_cart   = SVector{3,T}(A * (v2_frac - v1_frac))
+                lv1_cart = SVector{3,T}(L_uc * lv1_frac)
+                lv2_cart = SVector{3,T}(L_uc * lv2_frac)
+                r_cart   = SVector{3,T}(L_uc * (v2_frac - v1_frac))
 
                 lv1_cart = chop3(lv1_cart)
                 lv2_cart = chop3(lv2_cart)
@@ -92,24 +179,30 @@ function read_ifc2(path::AbstractString,
 end
 
 """
-    read_ifc3(path, r_frac_uc, A) -> IFCs{3,T}
+    read_ifc3(ifc3_path, ucposcar_path) -> IFCs{3,T}
+    read_ifc3(path, r_frac_uc, L_uc) -> IFCs{3,T}
 
 Read a 3rd-order `outfile.forceconstant_thirdorder` (TDEP-style).
 
 Inputs
 - `path::AbstractString`: file path
 - `r_frac_uc::AbstractVector{SVector{3,T}}`: fractional positions of atoms in the unit cell (length = na)
-- `A::AbstractMatrix{T}`: 3×3 lattice with **columns as lattice vectors** so `cart = A * frac`
+- `L_uc::AbstractMatrix{T}`: 3×3 lattice with **columns as lattice vectors** so `cart = A * frac`
 
 Returns
 - `IFCs{3,T}` with `na_uc`, `r_cut`, and `atoms::Vector{AtomFC3{T,N}}`
 """
+function read_ifc3(ifc3_path::AbstractString, ucposcar_path::AbstractString)
+    x_frac, cell = read_poscar_data(ucposcar_path)
+    return read_ifc3(ifc3_path, x_frac, cell)
+end
+
 function read_ifc3(path::AbstractString,
                            r_frac_uc::AbstractVector{SVector{3,T}},
-                           A::AbstractMatrix{T};
+                           L_uc::AbstractMatrix{T};
                            chop_tol::T = T(1e-13)) where {T<:Real}
 
-    @assert size(A) == (3,3) "Lattice A must be 3×3."
+    @assert size(L_uc) == (3,3) "Lattice A must be 3×3."
 
     # local helpers (reuse your global readline_skip_text! / read_vec3!)
     chop3(v::SVector{3,T}) = SVector{3,T}(ntuple(i -> (abs(v[i]) < chop_tol ? zero(T) : v[i]), 3))
@@ -159,13 +252,13 @@ function read_ifc3(path::AbstractString,
                 v3_frac = lv3_frac + r_frac_uc[i3]
 
                 # Convert to Cartesian
-                lv1_cart = SVector{3,T}(A * lv1_frac)
-                lv2_cart = SVector{3,T}(A * lv2_frac)
-                lv3_cart = SVector{3,T}(A * lv3_frac)
+                lv1_cart = SVector{3,T}(L_uc * lv1_frac)
+                lv2_cart = SVector{3,T}(L_uc * lv2_frac)
+                lv3_cart = SVector{3,T}(L_uc * lv3_frac)
 
-                v1 = SVector{3,T}(A * v1_frac)
-                v2 = SVector{3,T}(A * v2_frac)
-                v3 = SVector{3,T}(A * v3_frac)
+                v1 = SVector{3,T}(L_uc * v1_frac)
+                v2 = SVector{3,T}(L_uc * v2_frac)
+                v3 = SVector{3,T}(L_uc * v3_frac)
 
                 # Relative vectors (Fortran: rv1=0, rv2=v2-v1, rv3=v3-v1)
                 rv1 = SVector{3,T}(0, 0, 0)
@@ -198,6 +291,7 @@ function read_ifc3(path::AbstractString,
 end
 
 """
+    read_ifc4(ifc4_path, ucposcar_path) -> IFCs{4,T}
     read_ifc4(path, r_frac_uc, A) -> IFCs{4,T}
 
 Read a 4th-order TDEP-style force constant file.
@@ -205,17 +299,22 @@ Read a 4th-order TDEP-style force constant file.
 Inputs
 - `path::AbstractString`
 - `r_frac_uc::AbstractVector{SVector{3,T}}`: fractional positions for the unit cell (length = na)
-- `A::AbstractMatrix{T}` (3×3): lattice with **columns** as lattice vectors ⇒ `cart = A * frac`
+- `L_uc::AbstractMatrix{T}` (3×3): lattice with **columns** as lattice vectors ⇒ `cart = A * frac`
 
 Returns
 - `IFCs{4,T}` with `na_uc`, `r_cut`, and `atoms::Vector{AtomFC4{T,N}}`
 """
-function read_ifc4(path::AbstractString,
-                           r_frac_uc::AbstractVector{SVector{3,T}},
-                           A::AbstractMatrix{T};
-                           chop_tol::T = T(1e-13)) where {T<:Real}
+function read_ifc4(ifc4_path::AbstractString, ucposcar_path::AbstractString)
+    x_frac, cell = read_poscar_data(ucposcar_path)
+    return read_ifc4(ifc4_path, x_frac, cell)
+end
 
-    @assert size(A) == (3,3) "Lattice A must be 3×3."
+function read_ifc4(path::AbstractString,
+                    r_frac_uc::AbstractVector{SVector{3,T}},
+                    L_uc::AbstractMatrix{T};
+                    chop_tol::T = T(1e-13)) where {T<:Real}
+
+    @assert size(L_uc) == (3,3) "Lattice A must be 3×3."
 
     chop3(v::SVector{3,T}) = SVector{3,T}(ntuple(i -> (abs(v[i]) < chop_tol ? zero(T) : v[i]), 3))
 
@@ -265,15 +364,15 @@ function read_ifc4(path::AbstractString,
                 v4_frac = lv4_frac + r_frac_uc[i4]
 
                 # Cartesian shifts and positions
-                lv1_cart = SVector{3,T}(A * lv1_frac)
-                lv2_cart = SVector{3,T}(A * lv2_frac)
-                lv3_cart = SVector{3,T}(A * lv3_frac)
-                lv4_cart = SVector{3,T}(A * lv4_frac)
+                lv1_cart = SVector{3,T}(L_uc * lv1_frac)
+                lv2_cart = SVector{3,T}(L_uc * lv2_frac)
+                lv3_cart = SVector{3,T}(L_uc * lv3_frac)
+                lv4_cart = SVector{3,T}(L_uc * lv4_frac)
 
-                v1 = SVector{3,T}(A * v1_frac)
-                v2 = SVector{3,T}(A * v2_frac)
-                v3 = SVector{3,T}(A * v3_frac)
-                v4 = SVector{3,T}(A * v4_frac)
+                v1 = SVector{3,T}(L_uc * v1_frac)
+                v2 = SVector{3,T}(L_uc * v2_frac)
+                v3 = SVector{3,T}(L_uc * v3_frac)
+                v4 = SVector{3,T}(L_uc * v4_frac)
 
                 # relative vectors (Fortran: rv1=0)
                 rv1 = SVector{3,T}(0,0,0)

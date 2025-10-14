@@ -45,15 +45,15 @@ function remap(
     # Build Neighborlists #
     #######################
 
-    r_cart_ss = to_cart_coords.(Ref(L_sc), x_frac_sc)
+    x_cart_ss = to_cart_coords.(Ref(L_sc), x_frac_sc)
 
     # Only build neighbor lists for unique cutoff distances
     unique_rcs = unique(r_cut_ifc)
     nl_map = [findfirst(rc -> rc == ifc.r_cut, unique_rcs) for ifc in ifcs]
     # TDEP adds a little tol to r_cut
-    nls = [neighborlist(r_cart_ss, rc + T(1e-4); unitcell = L_sc, showprogress = true) for rc in unique_rcs]
+    dts = [make_distance_table(x_cart_ss, x_frac_sc, L_sc, rc + T(1e-4)) for rc in unique_rcs]
 
-    return [remap(ifcs[i], nls[nl_map[i]], ss_to_uc_map) for i in eachindex(ifcs)]
+    return [remap(ifcs[i], dts[nl_map[i]], ss_to_uc_map) for i in eachindex(ifcs)]
 end
 
 function remap(ifc2::IFCs{2,T}, nl, ss_to_uc_map) where T
@@ -72,124 +72,114 @@ end
 
 @inline sqnorm(v::SVector{3,<:Real}) = dot(v, v)
 
-"""
-Quantize a triple of displacement vectors into a tolerant Dict key.
-Use a quantum q ~ sqrt(lo_sqtol) from your code or whatever tolerance you prefer.
-"""
-@inline function key9(rv2::SVector{3,T}, rv3::SVector{3,T}, rv4::SVector{3,T}, q::T) where {T<:AbstractFloat}
-    return (
-        round(Int, rv2[1]/q), round(Int, rv2[2]/q), round(Int, rv2[3]/q),
-        round(Int, rv3[1]/q), round(Int, rv3[2]/q), round(Int, rv3[3]/q),
-        round(Int, rv4[1]/q), round(Int, rv4[2]/q), round(Int, rv4[3]/q),
-    )
+
+# If your UC quartets only store lv (Å) and not integer flags, convert once:
+@inline function lv_cart_to_n(L::AbstractMatrix{T}, lv::SVector{3,T}) where {T<:AbstractFloat}
+    n_real = -(L \ lv)
+    return SVector{3,Int}(round.(n_real; r=RoundNearestTiesAway))
 end
 
 """
-Build a fast lookup for a unit-cell atom uca: (rv2,rv3,rv4) -> (m, mwm, idx)
-Assumes fc.atom[uca].quartet[ii] has fields rv2, rv3, rv4, m, mwm.
+Build UC lookup for atom `uca`, keyed by **(i2,n2,i3,n3,i4,n4)**, all integers.
+Value is `(m, idx)`
 """
-function build_uc_quartet_lookup(fc, uca; q::Float64=1e-8)
-    lut = Dict{NTuple{9,Int}, Tuple{Float64,Float64,Int}}()
-    qs = q
-    for ii in 1:fc.atom[uca].n
-        qrt = fc.atom[uca].quartet[ii]
-        k = key9(qrt.rv2, qrt.rv3, qrt.rv4, qs)
-        lut[k] = (qrt.m, ii)
+function build_uc_quartet_lookup_int(fc4::IFCs{4, T}, uca, L_uc::AbstractMatrix{T}) where T
+    KEY_TYPE = Tuple{Int, Int, Int, SVector{3, T}, SVector{3, T}, SVector{3,T}}
+    VALUE_TYPE = SArray{Tuple{3,3,3,3}, T}
+    lut = Dict{KEY_TYPE, VALUE_TYPE}()
+
+    for q in get_interactions(fc4, uca)
+        q = fc.atom[uca].quartet[ii]
+
+        n2 = lv_cart_to_n(L_uc, q.lv2)
+        n3 = lv_cart_to_n(L_uc, q.lv3)
+        n4 = lv_cart_to_n(L_uc, q.lv4)
+
+        k = (q.idxs..., n2, n3, n4)
+        lut[k] = q.ifcs 
     end
     return lut
 end
 
-# ---- neighbor table interface you said you have ---------------------------
-# Expected minimal API of `dt` (distance table / neighbor list):
-#   dt.particle[a1].n                :: Int
-#   dt.particle[a1].ind[i]           :: Int              (neighbor index)
-#   dt.particle[a1].v[i]             :: SVector{3,T}     (Cartesian displacement)
-#   dt.particle[a1].lv[i]            :: SVector{3,Int}   (image lattice vector)
-#
-# And a constructor like:
-#   build_dist_table!(dt, ss_positions::Vector{SVector{3,T}}, L_sc::SMatrix{3,3,T}, cutoff::T)
-#
-# If your names differ, just adapt in the spots below.
-
-# ---- main remap -----------------------------------------------------------
+# ---------- main remap (uses integer flags from dt) ------------------------
 
 """
-    remap_fc4!(fcss, fc, uc, ss, dt, s2u; tol_key=1e-8, pad=10.0*sqrt_tol)
+    remap_fc4(fc::IFCs{4,T}, dt::DistanceTable{T}, s2u::AbstractVector{<:Integer};
+              L_uc::Union{Nothing,SMatrix}=nothing)
 
-- `fc`  : unit-cell force constants (4th order)
-- `uc`  : unit-cell structure (only used for fc scan; keep for parity with Fortran)
-- `ss`  : supercell structure (must expose `na` and `positions` + `L_sc` you use to build dt)
-- `dt`  : neighbor table built over the supercell with cutoff ≥ rc + pad
-- `s2u` : mapping supercell atom index → unit-cell atom index (your existing map)
-- `tol_key` : quantization (in Å) used for tolerant matching of (rv2,rv3,rv4)
-- `pad` : extra margin added to `rc` when building the neighbor list
+- Uses the stored integer image flags `dt.atoms[a].ns[i]`.
+- Keys the UC lookup with integers (no float tolerance).
+- Expects your UC quartets either already have integer flags (n2,n3,n4), or pass `L_uc`
+  so we can convert `lv`→integer once in the lookup builder.
 
-After the call, `fcss` mirrors your Fortran: one atom entry per supercell atom,
-same number of quartets as its corresponding unit-cell atom, and (m,mwm) copied.
+Returns your IFCs with per-atom quartets filled; only `m` is copied (no mwm).
 """
-function remap_fc4(fc::IFCs{4,T}, dt::DistanceTable{T}, s2u::AbstractVector{<:Integer};
-                    tol_key::Float64 = 1e-8) where T
+function remap_fc4(fc::IFCs{4,T}, dt::DistanceTable{T}, s2u::AbstractVector{<:Integer},
+                   L_uc::AbstractMatrix{T}) where {T}
 
-    # 1) Actual cutoff rc from the unit-cell FC (max norm of rv2/rv3/rv4)
-    rc = 0.0
-    for uca in 1:fc.na
-        for qidx in 1:fc.atom[uca].n
-            qrt = fc.atom[uca].quartet[qidx]
-            rc = max(rc, sqrt(sqnorm(qrt.rv2)))
-            rc = max(rc, sqrt(sqnorm(qrt.rv3)))
-            rc = max(rc, sqrt(sqnorm(qrt.rv4)))
-        end
+    rc = zero(Float64)
+    for uca in 1:fc.na, q in fc.atom[uca].quartet
+        rc = max(rc, sqrt(sqnorm(q.rv2)))
+        rc = max(rc, sqrt(sqnorm(q.rv3)))
+        rc = max(rc, sqrt(sqnorm(q.rv4)))
     end
-    rc_sq = rc*rc + 10*tol_key  # mirrors your rc_sq = rc**2 + 10*lo_sqtol
+    rc_sq = rc^2
 
+    KEY_TYPE = Tuple{Int, Int, Int, SVector{3, T}, SVector{3, T}, SVector{3,T}}
+    VALUE_TYPE = SArray{Tuple{3,3,3,3}, T}
+    all_luts = Dict{Int, Dict{KEY_TYPE, VALUE_TYPE}}()
 
-    # Pre-build LUTs per unique unit-cell atom species/index to avoid O(n^4) lookups
-    # Many supercell atoms map to the same unit-cell index; cache those LUTs.
-    lut_cache = Dict{Int, Dict{NTuple{9,Int},Tuple{Float64,Float64,Int}}}()
+    data  = AtomFC4{T}[]
+    na_ss = length(dt.atoms)
 
-    data = AtomFC4{T}[]
-
-    # 4) For every supercell atom, generate quartets by neighbor triples
+    # 3) per supercell atom
     for a1 in 1:na_ss
-        uca = s2u[a1]  
+        uca = s2u[a1]
         n_uc_quartets = fc.atom[uca].n
 
-        # LUT for this unit-cell prototype (rv2,rv3,rv4 -> (m,mwm,idx))
-        lut = get!(lut_cache, uca) do
-            build_uc_quartet_lookup(fc, uca; q=tol_key)
+        lut = get!(all_luts, uca) do
+            build_uc_quartet_lookup_int(fc, uca, L_uc)
         end
 
         l = 0
         quartets = Vector{FC4Data{T}}(undef, n_uc_quartets)
 
-        @inbounds for i in 1:n_neighbors
-            vi = dt.atoms[a1].vs[i]
-            lvi = dt.atoms[a1].lvs[i]
-            ii  = dt.atoms[a1].inds[i]
-            for j in 1:n_neighbors
-                vj  = dt.atoms[a1].vs[j]
-                if sqnorm(vi - vj) >= rc_sq; continue; end
-                lvj = dt.atoms[a1].lvs[j]
-                jj  = dt.atoms[a1].inds[j]
-                for k in 1:n_neighbors
-                    vk = dt.atoms[a1].vs[k]
-                    if sqnorm(vj - vk) >= rc_sq; continue; end
-                    if sqnorm(vi - vk) >= rc_sq; continue; end
+        inds = dt.atoms[a1].inds
+        vs   = dt.atoms[a1].vs     # Cartesian min-image vectors (Å)
+        ns   = dt.atoms[a1].ns     # integer image flags (same basis as UC LUT)
+        nnb  = length(inds)
+
+        @inbounds for i in 1:nnb
+            vi  = vs[i]
+            ii  = inds[i]
+            n2  = ns[i]
+
+            for j in 1:nnb
+                vj  = vs[j]
+                (sqnorm(vi - vj) <= rc_sq) || continue
+                jj  = inds[j]
+                n3  = ns[j]
+
+                for k in 1:nnb
+                    vk  = vs[k]
+                    (sqnorm(vj - vk) <= rc_sq) || continue
+                    (sqnorm(vi - vk) <= rc_sq) || continue
+                    kk  = inds[k]
+                    n4  = ns[k]
+
+                    # integer key: (unit-cell neighbor index, integer image flags)
+                    key = (s2u[ii], s2u[jj], s2u[kk], n2, n3, n4)
+
+                    m = get(lut, key, nothing)
+                    m === nothing && error("No UC quartet for a1=$a1 (key=$(key))")
 
                     l += 1
 
-                    # Find matching UC quartet (by tolerant key of rv2/rv3/rv4)
-                    key = key9(vi, vj, vk, tol_key)
-                    ifcs, _ = get(lut, key, nothing)
-                    if ifcs === nothing
-                        error("Could not locate quartet for a1=$a1; this should be impossible.")
-                    end
-
-                    quartets[l] = FC4Data{T}(
-                        SVector(a1, ii, jj, dt.atoms[a1].inds[k]),
+                    quartets[l] = FC4Data{T}( 
+                        SVector(a1, ii, jj, dt.atoms[a1].inds[k]), 
                         SVector(SVector{3,Int}(0,0,0), lvi, lvj, dt.atoms[a1].lvs[k]),
-                        SVector{3,T}(0,0,0),
-                        vi,
+                        SVector{3,T}(0,0,0), 
+                        vi, 
                         vj,
                         vk,
                         ifcs
@@ -199,19 +189,12 @@ function remap_fc4(fc::IFCs{4,T}, dt::DistanceTable{T}, s2u::AbstractVector{<:In
             end
         end
 
-        # Count sanity check (like your Fortran)
-        if l != n_uc_quartets
-            error("Inconsistent number of quartets for atom $a1 (got $l, expected $n_uc_quartets).")
-        end
-
+        (l == n_uc_quartets) || error("Inconsistent number of quartets for atom $a1: got $l, expected $n_uc_quartets")
         push!(data, AtomFC4{T, n_uc_quartets}(SVector{n_uc_quartets}(quartets)))
-
     end
 
-    return IFCs{4, T}(na, sqrt(rc_sq), data)
+    return IFCs{4, T}(na_ss, sqrt(rc_sq), data)
 end
-
-
 
 """
     map_super_to_unitcell(
