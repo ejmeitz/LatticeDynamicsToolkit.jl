@@ -299,7 +299,7 @@ function read_ifc4(path::AbstractString,
                 rv1 = SVector{3,T}(0,0,0)
                 rv2 = chop3(v2 - v1)
                 rv3 = chop3(v3 - v1)
-                rv4_3 = chop3(v4 - v1)
+                rv4 = chop3(v4 - v1)
 
                 lv1_cart = chop3(lv1_cart)
                 lv2_cart = chop3(lv2_cart)
@@ -309,13 +309,10 @@ function read_ifc4(path::AbstractString,
                 # cutoff per Fortran
                 max_rcut = max(max_rcut, norm(rv2))
                 max_rcut = max(max_rcut, norm(rv3))
-                max_rcut = max(max_rcut, norm(rv4_3))
+                max_rcut = max(max_rcut, norm(rv4))
                 max_rcut = max(max_rcut, norm(rv2 - rv3))
-                max_rcut = max(max_rcut, norm(rv2 - rv4_3))
-                max_rcut = max(max_rcut, norm(rv3 - rv4_3))
-
-                # pack rv4 as SVector{4,T} to match your FC4Data field
-                rv4 = SVector{4,T}(rv4_3[1], rv4_3[2], rv4_3[3], zero(T))
+                max_rcut = max(max_rcut, norm(rv2 - rv4))
+                max_rcut = max(max_rcut, norm(rv3 - rv4))
 
                 quartets[i] = FC4Data{T}(
                     SVector{4,Int}(i1, i2, i3, i4),

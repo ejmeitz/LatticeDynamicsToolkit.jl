@@ -37,3 +37,19 @@ end
     ifc2, ifc3, ifc4 = load_sw_ifcs(ucposcar_path)
 
 end
+
+@testset "Remap" begin
+    
+    ucposcar_path = joinpath(data_dir, "infile.ucposcar")
+    ssposcar_path = joinpath(data_dir, "infile.ssposcar")
+    ifc4_path = joinpath(data_dir, "infile.forceconstant_fourthorder")
+    ifc4 = read_ifc4(ifc4_path, ucposcar_path)
+
+    uc = CrystalStructure(ucposcar_path)
+    sc = CrystalStructure(ssposcar_path)
+
+    # this is just remapping to the same supercell
+    new_ifc4 = remap(sc, uc, ifc4)
+
+
+end

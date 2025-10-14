@@ -27,7 +27,7 @@ struct FC4Data{T} <: FCData{4,T}
     rv1::SVector{3, T}
     rv2::SVector{3, T}
     rv3::SVector{3, T}
-    rv4::SVector{4,T}
+    rv4::SVector{3, T}
     ifcs::SArray{Tuple{3,3,3,3}, T}
 end
 

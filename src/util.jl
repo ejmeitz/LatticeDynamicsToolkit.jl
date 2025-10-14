@@ -14,67 +14,58 @@ function read_vec3!(io, T)
 end
 
 function read_poscar_symbol_block(path::String)
-    species_line = ""
-    count_line = ""
-    open(path, "r") do f
+
+    return open(path, "r") do f
         for _ in 1:5 
             readline(f)
         end
         species_line = readline(f)
         count_line = readline(f)
-    end
-    symbols = Symbol.(split(strip(species_line)))
-    counts = parse.(Int, split(strip(count_line)))
 
-    return symbols, counts
+        symbols = Symbol.(split(strip(species_line)))
+        counts = parse.(Int, split(strip(count_line)))
+        (symbols, counts)
+    end
+
 end
 
-function read_poscar_cell(path::String; n_atoms = nothing)
+function read_poscar_cell(path::String, ::Type{T} = Float64) where T
 
-    cell = zeros(Float64, 3, 3)
-
-    open(path, "r") do f
+    return open(path, "r") do f
         readline(f)
-        scale = parse(Float64, readline(f))
-        lv1 = scale .* parse.(Float64, split(strip(readline(f))))
-        lv2 = scale .* parse.(Float64, split(strip(readline(f))))
-        lv3 = scale .* parse.(Float64, split(strip(readline(f))))
+        scale = parse(T, readline(f))
+        lv1 = scale .* parse.(T, split(strip(readline(f))))
+        lv2 = scale .* parse.(T, split(strip(readline(f))))
+        lv3 = scale .* parse.(T, split(strip(readline(f))))
 
-        cell .= hcat(lv1, lv2, lv3) # cell vecs as columns
+        cell = hcat(lv1, lv2, lv3) # cell vecs as columns
 
         readline(f) # skip species line
 
-        natoms_file = sum(parse.(Int, split(strip(readline(f)))))
-        if !isnothing(n_atoms) && natoms_file != n_atoms
-            error(ArgumentError("Poscar has $(natoms_file) but you told me it would have $(natoms)"))
-        end
-        n_atoms = natoms_file
+        n_atoms = sum(parse.(Int, split(strip(readline(f)))))
 
+        (cell, n_atoms)
     end
-
-    return cell, n_atoms
 
 end
 
 function read_poscar_positions(
-        path;
-        n_atoms = nothing, 
+        path,
+        ::Type{T} = Float64;
         ssposcar_is_frac::Bool = true,
         store_frac_coords::Bool = false,
-        FT::Type{T} = Float64
     ) where {T <: AbstractFloat}
 
-    cell, n_atoms = read_poscar_cell(path; n_atoms = n_atoms)
+    cell, n_atoms = read_poscar_cell(path, T)
 
     positions = zeros(SVector{3, T}, n_atoms)
 
     convert_to_cart = (!store_frac_coords && ssposcar_is_frac)
 
-    if convert_to_cart
-        parse_line = (line) -> SVector(cell * parse.(T, split(strip(line))[1:3])...)
-    else
-        parse_line = (line) -> SVector(parse.(T, split(strip(line))[1:3])...)
-    end
+    K = (convert_to_cart ? cell : Matrix{T}(I, 3, 3))
+    parse_line = (line) -> SVector(K * parse.(T, split(strip(line))[1:3])...)
+
+
 
     open(path, "r") do f
         readline(f)
@@ -96,21 +87,18 @@ function read_poscar_positions(
 end
 
 function read_poscar_data(
-        path; 
-        n_atoms = nothing,
+        path, 
+        ::Type{FLOAT_TYPE} = Float64; 
         ssposcar_is_frac::Bool = true,
-        store_frac_coords::Bool = true,
-        FT::Type{FLOAT_TYPE} = Float64
+        store_frac_coords::Bool = true
     ) where {FLOAT_TYPE <: AbstractFloat}
 
     symbols, counts = read_poscar_symbol_block(path)
     species = reduce(vcat, [fill(s, c) for (s,c) in zip(symbols, counts)])
 
-    positions, cell = read_poscar_positions(path;
-                                            n_atoms = n_atoms, 
+    positions, cell = read_poscar_positions(path, FLOAT_TYPE;
                                             ssposcar_is_frac = ssposcar_is_frac,
-                                            store_frac_coords = store_frac_coords,
-                                            FT = FLOAT_TYPE)
+                                            store_frac_coords = store_frac_coords)
     
     cell = FLOAT_TYPE.(cell)
 

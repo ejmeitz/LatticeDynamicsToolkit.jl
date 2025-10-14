@@ -32,19 +32,7 @@ function remap(
     # TDEP adds a little tol to r_cut
     dts = [make_distance_table(new_sc, rc + T(1e-4)) for rc in unique_rcs]
 
-    return [remap(ifcs_old[i], dts[nl_map[i]], ss_to_uc_map) for i in eachindex(ifcs_old)]
-end
-
-function remap(ifc2::IFCs{2,T}, nl, ss_to_uc_map) where T
-
-end
-
-function remap(ifc3::IFCs{3,T}, nl, ss_to_uc_map) where T
-
-end
-
-function remap(ifc4::IFCs{4,T}, nl, ss_to_uc_map) where T
-
+    return [remap(ifcs_old[i], dts[nl_map[i]], ss_to_uc_map, uc.L) for i in eachindex(ifcs_old)]
 end
 
 
@@ -55,7 +43,7 @@ end
 # If your UC quartets only store lv (Å) and not integer flags, convert once:
 @inline function lv_cart_to_n(L::AbstractMatrix{T}, lv::SVector{3,T}) where {T<:AbstractFloat}
     n_real = -(L \ lv)
-    return SVector{3,Int}(round.(n_real; r=RoundNearestTiesAway))
+    return SVector{3,Int16}(round.(Int16, n_real))#; r=RoundNearestTiesAway))
 end
 
 """
@@ -63,18 +51,16 @@ Build UC lookup for atom `uca`, keyed by **(i2,n2,i3,n3,i4,n4)**, all integers.
 Value is `(m, idx)`
 """
 function build_uc_quartet_lookup_int(fc4::IFCs{4, T}, uca, L_uc::AbstractMatrix{T}) where T
-    KEY_TYPE = Tuple{Int, Int, Int, SVector{3, T}, SVector{3, T}, SVector{3,T}}
+    KEY_TYPE = Tuple{Int, Int, Int, SVector{3, Int16}, SVector{3, Int16}, SVector{3,Int16}}
     VALUE_TYPE = SArray{Tuple{3,3,3,3}, T}
     lut = Dict{KEY_TYPE, VALUE_TYPE}()
 
     for q in get_interactions(fc4, uca)
-        q = fc.atom[uca].quartet[ii]
+        n2 = lv_cart_to_n(L_uc, q.lvs[2])
+        n3 = lv_cart_to_n(L_uc, q.lvs[3])
+        n4 = lv_cart_to_n(L_uc, q.lvs[4])
 
-        n2 = lv_cart_to_n(L_uc, q.lv2)
-        n3 = lv_cart_to_n(L_uc, q.lv3)
-        n4 = lv_cart_to_n(L_uc, q.lv4)
-
-        k = (q.idxs..., n2, n3, n4)
+        k = (q.idxs[2:end]..., n2, n3, n4)
         lut[k] = q.ifcs 
     end
     return lut
@@ -93,18 +79,22 @@ end
 
 Returns your IFCs with per-atom quartets filled; only `m` is copied (no mwm).
 """
-function remap_fc4(fc::IFCs{4,T}, dt::DistanceTable{T}, s2u::AbstractVector{<:Integer},
-                   L_uc::AbstractMatrix{T}) where {T}
+function remap(
+        fc::IFCs{4,T},
+        dt::DistanceTable{T},
+        s2u::AbstractVector{<:Integer},
+        L_uc::AbstractMatrix{T}
+    ) where {T}
 
-    rc = zero(Float64)
-    for uca in 1:fc.na, q in fc.atom[uca].quartet
+    rc = zero(T)
+    for uca in 1:fc.na, q in get_interactions(fc, uca)
         rc = max(rc, sqrt(sqnorm(q.rv2)))
         rc = max(rc, sqrt(sqnorm(q.rv3)))
         rc = max(rc, sqrt(sqnorm(q.rv4)))
     end
     rc_sq = rc^2
 
-    KEY_TYPE = Tuple{Int, Int, Int, SVector{3, T}, SVector{3, T}, SVector{3,T}}
+    KEY_TYPE = Tuple{Int, Int, Int, SVector{3, Int16}, SVector{3, Int16}, SVector{3,Int16}}
     VALUE_TYPE = SArray{Tuple{3,3,3,3}, T}
     all_luts = Dict{Int, Dict{KEY_TYPE, VALUE_TYPE}}()
 
@@ -114,7 +104,7 @@ function remap_fc4(fc::IFCs{4,T}, dt::DistanceTable{T}, s2u::AbstractVector{<:In
     # 3) per supercell atom
     for a1 in 1:na_ss
         uca = s2u[a1]
-        n_uc_quartets = fc.atom[uca].n
+        n_uc_quartets = n_neighbors(fc.atoms[uca])
 
         lut = get!(all_luts, uca) do
             build_uc_quartet_lookup_int(fc, uca, L_uc)
@@ -125,18 +115,21 @@ function remap_fc4(fc::IFCs{4,T}, dt::DistanceTable{T}, s2u::AbstractVector{<:In
 
         inds = dt.atoms[a1].inds
         vs   = dt.atoms[a1].vs     # Cartesian min-image vectors (Å)
+        lvs = dt.atoms[a1].lvs
         ns   = dt.atoms[a1].ns     # integer image flags (same basis as UC LUT)
         nnb  = length(inds)
 
         @inbounds for i in 1:nnb
             vi  = vs[i]
             ii  = inds[i]
+            lvi = lvs[i]
             n2  = ns[i]
 
             for j in 1:nnb
                 vj  = vs[j]
                 (sqnorm(vi - vj) <= rc_sq) || continue
                 jj  = inds[j]
+                lvj = lvs[j]
                 n3  = ns[j]
 
                 for k in 1:nnb
@@ -149,14 +142,14 @@ function remap_fc4(fc::IFCs{4,T}, dt::DistanceTable{T}, s2u::AbstractVector{<:In
                     # integer key: (unit-cell neighbor index, integer image flags)
                     key = (s2u[ii], s2u[jj], s2u[kk], n2, n3, n4)
 
-                    m = get(lut, key, nothing)
-                    m === nothing && error("No UC quartet for a1=$a1 (key=$(key))")
+                    ifcs = get(lut, key, nothing)
+                    ifcs === nothing && error("No UC quartet for a1=$a1 (key=$(key))")
 
                     l += 1
 
                     quartets[l] = FC4Data{T}( 
-                        SVector(a1, ii, jj, dt.atoms[a1].inds[k]), 
-                        SVector(SVector{3,Int}(0,0,0), lvi, lvj, dt.atoms[a1].lvs[k]),
+                        SVector(a1, ii, jj, kk), 
+                        SVector(SVector{3,Int}(0,0,0), lvi, lvj, lvs[k]),
                         SVector{3,T}(0,0,0), 
                         vi, 
                         vj,
