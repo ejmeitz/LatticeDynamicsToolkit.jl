@@ -1,85 +1,6 @@
 export read_ifc2, read_ifc3, read_ifc4
 
 
-function read_poscar_cell(path; n_atoms = nothing)
-
-    cell = zeros(Float64, 3, 3)
-
-    open(path, "r") do f
-        readline(f)
-        scale = parse(Float64, readline(f))
-        lv1 = scale .* parse.(Float64, split(strip(readline(f))))
-        lv2 = scale .* parse.(Float64, split(strip(readline(f))))
-        lv3 = scale .* parse.(Float64, split(strip(readline(f))))
-
-        cell .= hcat(lv1, lv2, lv3) # cell vecs as columns
-
-        readline(f) # skip species line
-
-        natoms_file = sum(parse.(Int, split(strip(readline(f)))))
-        if !isnothing(n_atoms) && natoms_file != n_atoms
-            error(ArgumentError("Poscar has $(natoms_file) but you told me it would have $(natoms)"))
-        end
-        n_atoms = natoms_file
-
-    end
-
-    return cell, n_atoms
-
-end
-
-function read_poscar_positions!(positions::Vector{SVector{3,T}}, path;
-                                n_atoms = nothing, 
-                                ssposcar_is_frac::Bool = true,
-                                store_frac_coords::Bool = false) where T
-
-    cell, n_atoms = read_poscar_cell(path; n_atoms = n_atoms)
-
-    convert_to_cart = (!store_frac_coords && ssposcar_is_frac)
-
-    if convert_to_cart
-        parse_line = (line) -> SVector(cell * parse.(T, split(strip(line))[1:3])...)
-    else
-        parse_line = (line) -> SVector(parse.(T, split(strip(line))[1:3])...)
-    end
-
-    open(path, "r") do f
-        readline(f)
-        readline(f)
-        readline(f)
-        readline(f)
-        readline(f)
-        readline(f) # skip species line
-        readline(f) # natoms line
-        readline(f) # skip "direct coordinates" line
-
-        for i in 1:n_atoms
-            positions[i] = parse_line(readline(f))
-        end
-    end
-
-    return positions, cell
-
-end
-
-# Just reads the positions and cell from POSCAR
-function read_poscar_data(path; n_atoms = nothing,
-                                ssposcar_is_frac::Bool = true,
-                                store_frac_coords::Bool = true)
-
-                                
-    cell, n_atoms = read_poscar_cell(path; n_atoms = n_atoms)
-
-    positions = zeros(SVector{3, Float64}, n_atoms)
-
-    return read_poscar_positions!(positions, path;
-                                    n_atoms = n_atoms, 
-                                    ssposcar_is_frac = ssposcar_is_frac,
-                                    store_frac_coords = store_frac_coords)
-
-end
-
-
 """
     read_ifc2(ifc2_path, ucposcar_path)
     read_ifc2(path, r_frac_uc, L_uc) -> IFCs{2, T}
@@ -94,7 +15,7 @@ Inputs
 
 """
 function read_ifc2(ifc2_path::AbstractString, ucposcar_path::AbstractString)
-    x_frac_uc, L_uc = read_poscar_data(ucposcar_path)
+    _, x_frac_uc, L_uc = read_poscar_data(ucposcar_path)
     return read_ifc2(ifc2_path, x_frac_uc, L_uc)
 end
 
@@ -193,7 +114,7 @@ Returns
 - `IFCs{3,T}` with `na_uc`, `r_cut`, and `atoms::Vector{AtomFC3{T,N}}`
 """
 function read_ifc3(ifc3_path::AbstractString, ucposcar_path::AbstractString)
-    x_frac, cell = read_poscar_data(ucposcar_path)
+    _, x_frac, cell = read_poscar_data(ucposcar_path)
     return read_ifc3(ifc3_path, x_frac, cell)
 end
 
@@ -305,7 +226,7 @@ Returns
 - `IFCs{4,T}` with `na_uc`, `r_cut`, and `atoms::Vector{AtomFC4{T,N}}`
 """
 function read_ifc4(ifc4_path::AbstractString, ucposcar_path::AbstractString)
-    x_frac, cell = read_poscar_data(ucposcar_path)
+    _, x_frac, cell = read_poscar_data(ucposcar_path)
     return read_ifc4(ifc4_path, x_frac, cell)
 end
 

@@ -3,57 +3,36 @@ export remap
 
 # Assumes coords are all in box already
 function remap(
-        x_frac_sc::AbstractVector{SVector{3,T}},
-        atom_types_sc, 
-        L_sc::AbstractMatrix{T},
-        x_frac_uc::AbstractVector{SVector{3,T}},
-        atom_types_uc,
-        L_uc::AbstractMatrix{T},
-        ifcs::Vararg{<:IFCs, N}
-    ) where {T,N}
+        new_sc::CrystalStructure{T},
+        uc::CrystalStructure{T},
+        ifcs_old::Vararg{<:IFCs, N}
+    ) where {T <: AbstractFloat, N}
 
     # Check input
-    n_uc = length(x_frac_uc)
-    n_sc = length(x_frac_sc)
-    if n_sc != length(atom_types_sc)
-        throw(DimensionMismatch("the number of atomic positions in the super cell $(n_sc) do not match the number of atom types ($(length(atom_types_sc)))"))
-    end
-    if n_uc != length(atom_types_uc)
-        throw(DimensionMismatch("the number of atomic positions in the unitcell $(n_uc) do not match the number of atom types ($(length(atom_types_uc)))"))
-    end
-
-    n_uc_ifc = getproperty.(ifcs, :na)
-    r_cut_ifc = getproperty.(ifcs, :r_cut)
+    n_uc = length(uc)
+    n_uc_ifc = getproperty.(ifcs_old, :na)
+    r_cut_ifc = getproperty.(ifcs_old, :r_cut)
 
     if !allequal(n_uc_ifc)
-        throw(ArgumentError("You passed IFCs built from different size unitcells $(n_uc_ifc). You must call remap on each separately."))
+        throw(ArgumentError("You passed ifcs_old built from different size unitcells $(n_uc_ifc). You must call remap on each separately."))
     end
     if !all(n_uc .== n_uc_ifc)
         throw(ArgumentError("Your force constants are calcualted on a unitcells with $(n_uc_ifc) atoms, but you passed a unitcell with $(n_uc) atoms."))
     end
 
-    ss_to_uc_map = map_super_to_unitcell(
-        L_uc,
-        L_sc,
-        x_frac_uc,
-        x_frac_sc;
-        species_uc=atom_types_uc,
-        species_sc=atom_types_sc
-    ) 
+    ss_to_uc_map = map_super_to_unitcell(uc, new_sc) 
 
     #######################
     # Build Neighborlists #
     #######################
 
-    x_cart_ss = to_cart_coords.(Ref(L_sc), x_frac_sc)
-
     # Only build neighbor lists for unique cutoff distances
     unique_rcs = unique(r_cut_ifc)
-    nl_map = [findfirst(rc -> rc == ifc.r_cut, unique_rcs) for ifc in ifcs]
+    nl_map = [findfirst(rc -> rc == ifc.r_cut, unique_rcs) for ifc in ifcs_old]
     # TDEP adds a little tol to r_cut
-    dts = [make_distance_table(x_cart_ss, x_frac_sc, L_sc, rc + T(1e-4)) for rc in unique_rcs]
+    dts = [make_distance_table(new_sc, rc + T(1e-4)) for rc in unique_rcs]
 
-    return [remap(ifcs[i], dts[nl_map[i]], ss_to_uc_map) for i in eachindex(ifcs)]
+    return [remap(ifcs_old[i], dts[nl_map[i]], ss_to_uc_map) for i in eachindex(ifcs_old)]
 end
 
 function remap(ifc2::IFCs{2,T}, nl, ss_to_uc_map) where T
@@ -198,36 +177,23 @@ end
 
 """
     map_super_to_unitcell(
-        L_uc, L_sc,
-        x_frac_uc::AbstractVector{<:SVector{3,T}},
-        x_frac_sc::AbstractVector{<:SVector{3,T}};
-        species_uc=nothing, species_sc=nothing,
+        uc::CrystalStructure{T},
+        sc::CrystalStructure{T},
         tol::Real=1e-3,
     ) -> (s2u::Vector{Int}, translations::Vector{SVector{3,Int}})
 
 Map each supercell atom → its unit-cell atom (index) and unit-cell translation (i,j,k).
 Distances are computed in Å using the unit-cell lattice `L_uc`.
-- `L_uc`, `L_sc`: 3×3 with **columns** a,b,c (Cartesian, Å)
-- `x_frac_uc`, `x_frac_sc`: vectors of SVector{3} fractional coords
 - `tol` is in **Å** (e.g., 1e-3–1e-2 Å for slightly relaxed structures)
 """
 function map_super_to_unitcell(
-        L_uc::AbstractMatrix{T},
-        L_sc::AbstractMatrix{T},
-        x_frac_uc::AbstractVector{<:SVector{3,T}},
-        x_frac_sc::AbstractVector{<:SVector{3,T}};
-        species_uc::Union{Nothing,AbstractVector}=nothing,
-        species_sc::Union{Nothing,AbstractVector}=nothing,
+        uc::CrystalStructure{T},
+        sc::CrystalStructure{T},
         tol::Real=1e-3,
     ) where {T <: AbstractFloat}
 
-    @assert size(L_uc) == (3,3) && size(L_sc) == (3,3)
-    n_uc = length(x_frac_uc)
-    n_sc = length(x_frac_sc)
-    if (species_uc !== nothing) || (species_sc !== nothing)
-        @assert species_uc !== nothing && species_sc !== nothing "Provide both species arrays."
-        @assert length(species_uc) == n_uc && length(species_sc) == n_sc
-    end
+    n_uc = length(uc)
+    n_sc = length(sc)
 
     # PBC wrap to [-0.5, 0.5) per component in fractional space
     pbc_wrap(d::SVector{3,T}) = d .- round.(d)
@@ -240,12 +206,12 @@ function map_super_to_unitcell(
     d_frac =  MVector{3, T}(0,0,0)
     d_cart = MVector{3, T}(0,0,0)
 
-    M = inv(L_uc) * L_sc
+    M = inv(uc.L) * sc.L
     tol_sq = tol*tol
 
     @inbounds for j in 1:n_sc
         # Cartesian → uc frac (not reduced)
-        mul!(f_uc_raw, M, x_frac_sc[j])
+        mul!(f_uc_raw, M, sc.x_frac[j])
         # reduce to [0,1)
         f_red .= f_uc_raw .- floor.(f_uc_raw)
 
@@ -255,11 +221,10 @@ function map_super_to_unitcell(
         # nearest match in Å using uc lattice: distance = ‖L_uc * wrap(frac_diff)‖2
         best_i, best_d_sq = 0, T(Inf)
         for i in 1:n_uc
-            if species_uc !== nothing
-                species_uc[i] == species_sc[j] || continue
-            end
-            d_frac .= pbc_wrap(x_frac_uc[i] - f_red)
-            mul!(d_cart, L_uc, d_frac)
+            uc.species[i] == sc.species[j] || continue
+            
+            d_frac .= pbc_wrap(uc.x_frac[i] - f_red)
+            mul!(d_cart, uc.L, d_frac)
             d_sq = dot(d_cart, d_cart)
             if d_sq < best_d_sq
                 best_d_sq = d_sq
