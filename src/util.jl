@@ -140,3 +140,48 @@ function read_poscar_data(
 
 end
 
+
+
+
+"""
+    clean_fractional_coordinate(x::T; tol::T = sqrt(eps(T))) -> T
+
+Return a "clean" fractional coordinate `y` equivalent to `x` but snapped/wrapped into
+the half-open interval `[0, 1)` using tolerance `tol`.
+
+Behavior mirrors the Fortran `lo_clean_fractional_coordinates`:
+
+- If `|y| < tol`, set `y = 0`.
+- If `|y - 1| < tol`, set `y = 0`.
+- If `y ≥ 1`, repeatedly subtract 1.
+- If `y < 0`, repeatedly add 1.
+- Stop when `-tol < y < 1`.
+"""
+@inline function clean_fractional_coordinates(x::T; tol::T = lo_sqtol) where {T<:AbstractFloat}
+    y = x
+
+    while true
+        # snap very close to 0 and 1 to 0
+        if abs(y) < tol
+            y = zero(T)
+        end
+        if abs(y - one(T)) < tol
+            y = zero(T)
+        end
+
+        # wrap into [0,1) by integer shifts of 1
+        if y ≥ one(T)
+            y -= one(T)
+            continue
+        end
+        if y < zero(T)
+            y += one(T)
+            continue
+        end
+
+        # inside final window (-tol, 1) → done
+        if (y > -tol) && (y < one(T))
+            return y
+        end
+    end
+end

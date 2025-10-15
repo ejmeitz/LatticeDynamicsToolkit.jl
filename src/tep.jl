@@ -28,7 +28,7 @@ function energies_faithful(
 
     na = length(u)
 
-    maybe_check_na(i::Union{<:IFCs, Nothing}, na_true) = ifelse(isnothing(i), true, na_true == i.na) 
+    maybe_check_na(i::Union{<:IFCs, Nothing}, na_true) = isnothing(i) ? true : na_true == i.na 
 
     if !all(maybe_check_na.((fc2, fc3, fc4), na))
         throw(ArgumentError("Displacements have $(na) atoms, but passed IFCs are built from different size cell."))

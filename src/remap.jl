@@ -31,23 +31,22 @@ function remap(
 ) where {T}
 
 
-    na_sc = size(sc.rcart, 2)
+    na_sc = length(sc)
     data  = Vector{AtomFC2{T}}(undef, na_sc)
 
     z3 = SVector{3,T}(0,0,0)
 
     @inbounds for a1 in 1:na_sc
 
-        pairs = Vector{FC2Data{T}}(undef, length(fc.atoms[i]))
-
         uca = s2u[a1]
         r0 = sc.x_cart[a1]
+        
+        pairs = Vector{FC2Data{T}}(undef, length(fc.atoms[uca]))
 
         for (i,p) in enumerate(get_interactions(fc, uca))
             # Target absolute position in SC: r1 = r0 + r
             r1_cart = p.r + r0
-            #!TODO ACTUALLY IMPLEMENT THIS
-            r1_frac = clean_fractional_coordinates(sc.Linv * r1_cart, T(1e-10))
+            r1_frac = clean_fractional_coordinates.(sc.L_inv * r1_cart)
 
             # Find matching atom a2 in SC by fractional coordinates
             i2 = -1
@@ -64,7 +63,7 @@ function remap(
 
             # Fix the lattice image for atom 2 so that:
             r2_cart   = p.r - sc.x_cart[i2] + sc.x_cart[a1]
-            r2_lat    = round.(Int, Linv * r2_cart) 
+            r2_lat    = round.(Int, sc.L_inv * r2_cart) 
             lv2_cart  = sc.L * r2_lat 
             
             n2 = SVector{3,Int16}(r2_lat)
@@ -79,10 +78,10 @@ function remap(
             )
         end
 
-        data[a1] = AtomFC2{T, n_pairs}(SVector{n_pairs}(pairs))
+        data[a1] = AtomFC2{T}(pairs)
     end
 
-    return IFCs{2,T}(na_ss, fc.r_cut, data)   # or IFCs{2,T}(na_ss, fc.r_cut, data) if you store the cutoff in fc
+    return IFCs{2,T}(na_sc, fc.r_cut, data)   # or IFCs{2,T}(na_ss, fc.r_cut, data) if you store the cutoff in fc
 end
 
 

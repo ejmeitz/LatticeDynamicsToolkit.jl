@@ -1,4 +1,4 @@
-module TDEP_IFCs
+module TDEPToolkit
 
 using LinearAlgebra
 using StaticArrays
@@ -19,4 +19,4 @@ include("tep.jl")
 
 ##! ADD PRECOMPILATION OF IFC LOADING AND REMAPPING
 
-end # module TDEP_IFCs
+end # module TDEPToolkit
