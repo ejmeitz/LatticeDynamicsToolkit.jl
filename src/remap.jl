@@ -11,7 +11,6 @@ function remap(
     # Check input
     n_uc = length(uc)
     n_uc_ifc = getproperty.(ifcs_old, :na)
-    r_cut_ifc = getproperty.(ifcs_old, :r_cut)
 
     if !allequal(n_uc_ifc)
         throw(ArgumentError("You passed ifcs_old built from different size unitcells $(n_uc_ifc). You must call remap on each separately."))
@@ -22,68 +21,155 @@ function remap(
 
     ss_to_uc_map = map_super_to_unitcell(uc, new_sc) 
 
-    #######################
-    # Build Neighborlists #
-    #######################
-
-    # Only build neighbor lists for unique cutoff distances
-    unique_rcs = unique(r_cut_ifc)
-    nl_map = [findfirst(rc -> rc == ifc.r_cut, unique_rcs) for ifc in ifcs_old]
-    # TDEP adds a little tol to r_cut
-    dts = [make_distance_table(new_sc, rc + T(1e-4)) for rc in unique_rcs]
-
-    return [remap(ifcs_old[i], dts[nl_map[i]], ss_to_uc_map, uc.L) for i in eachindex(ifcs_old)]
+    return remap.(ifcs_old, Ref(new_sc), Ref(ss_to_uc_map))
 end
 
+function remap(
+    fc::IFCs{2,T},
+    sc::CrystalStructure{T},
+    s2u::AbstractVector{<:Integer};
+) where {T}
 
 
-@inline sqnorm(v::SVector{3,<:Real}) = dot(v, v)
+    na_sc = size(sc.rcart, 2)
+    data  = Vector{AtomFC2{T}}(undef, na_sc)
 
+    z3 = SVector{3,T}(0,0,0)
 
-# If your UC quartets only store lv (Å) and not integer flags, convert once:
-@inline function lv_cart_to_n(L::AbstractMatrix{T}, lv::SVector{3,T}) where {T<:AbstractFloat}
-    n_real = -(L \ lv)
-    return SVector{3,Int16}(round.(Int16, n_real))#; r=RoundNearestTiesAway))
-end
+    @inbounds for a1 in 1:na_sc
 
-"""
-Build UC lookup for atom `uca`, keyed by **(i2,n2,i3,n3,i4,n4)**, all integers.
-Value is `(m, idx)`
-"""
-function build_uc_quartet_lookup_int(fc4::IFCs{4, T}, uca, L_uc::AbstractMatrix{T}) where T
-    KEY_TYPE = Tuple{Int, Int, Int, SVector{3, Int16}, SVector{3, Int16}, SVector{3,Int16}}
-    VALUE_TYPE = SArray{Tuple{3,3,3,3}, T}
-    lut = Dict{KEY_TYPE, VALUE_TYPE}()
+        pairs = Vector{FC2Data{T}}(undef, length(fc.atoms[i]))
 
-    for q in get_interactions(fc4, uca)
-        n2 = lv_cart_to_n(L_uc, q.lvs[2])
-        n3 = lv_cart_to_n(L_uc, q.lvs[3])
-        n4 = lv_cart_to_n(L_uc, q.lvs[4])
+        uca = s2u[a1]
+        r0 = sc.x_cart[a1]
 
-        k = (q.idxs[2:end]..., n2, n3, n4)
-        lut[k] = q.ifcs 
+        for (i,p) in enumerate(get_interactions(fc, uca))
+            # Target absolute position in SC: r1 = r0 + r
+            r1_cart = p.r + r0
+            #!TODO ACTUALLY IMPLEMENT THIS
+            r1_frac = clean_fractional_coordinates(sc.Linv * r1_cart, T(1e-10))
+
+            # Find matching atom a2 in SC by fractional coordinates
+            i2 = -1
+            for a2 in 1:na_sc
+                if sum(abs.(sc.x_frac[a2] - r1_frac)) < lo_tol
+                    i2 = a2
+                    break
+                end
+            end
+            
+            if i2 == 0
+                error("Failed mapping second-order IFCs for atom $a1 (pair $i): no match for target position.")
+            end
+
+            # Fix the lattice image for atom 2 so that:
+            r2_cart   = p.r - sc.x_cart[i2] + sc.x_cart[a1]
+            r2_lat    = round.(Int, Linv * r2_cart) 
+            lv2_cart  = sc.L * r2_lat 
+            
+            n2 = SVector{3,Int16}(r2_lat)
+
+            # Store as FC2Data: (i1,i2), (lv1=0, lv2), (rv1=0, rv2=r), and the 3×3 ifcs
+            pairs[i] = FC2Data{T}(
+                SVector(a1, i2),
+                SVector(z3, lv2_cart),
+                p.r,
+                n2,
+                p.ifcs
+            )
+        end
+
+        data[a1] = AtomFC2{T, n_pairs}(SVector{n_pairs}(pairs))
     end
-    return lut
+
+    return IFCs{2,T}(na_ss, fc.r_cut, data)   # or IFCs{2,T}(na_ss, fc.r_cut, data) if you store the cutoff in fc
 end
 
-# ---------- main remap (uses integer flags from dt) ------------------------
 
-"""
-    remap_fc4(fc::IFCs{4,T}, dt::DistanceTable{T}, s2u::AbstractVector{<:Integer};
-              L_uc::Union{Nothing,SMatrix}=nothing)
+function remap(
+    fc::IFCs{3,T},
+    sc::CrystalStructure{T},
+    s2u::AbstractVector{<:Integer};
+    n_threads::Integer = Threads.nthreads()
+) where {T}
 
-- Uses the stored integer image flags `dt.atoms[a].ns[i]`.
-- Keys the UC lookup with integers (no float tolerance).
-- Expects your UC quartets either already have integer flags (n2,n3,n4), or pass `L_uc`
-  so we can convert `lv`→integer once in the lookup builder.
+    rc = zero(T)
+    for uca in 1:fc.na, t in get_interactions(fc, uca)
+        rc = max(rc, sqrt(sqnorm(t.rv2)))
+        rc = max(rc, sqrt(sqnorm(t.rv3)))
+    end
+    rc += lo_tol
+    rc_sq  = rc * rc
 
-Returns your IFCs with per-atom quartets filled; only `m` is copied (no mwm).
-"""
+    dt = make_distance_table(sc, rc; include_self = true)
+
+    na_ss = length(dt.atoms)
+
+    # One entry per supercell atom
+    data = Vector{AtomFC3{T}}(undef, na_ss)
+
+    @inbounds @tasks for a1 in 1:na_ss
+        @set ntasks=n_threads
+
+        uca = s2u[a1]
+
+        # Expect same # of triplets as its corresponding UC atom
+        n_uc_triplets = length(fc.atoms[uca])
+        l = 0
+        triplets = Vector{FC3Data{T}}(undef, n_uc_triplets)
+
+        inds = dt.atoms[a1].inds
+        vs   = dt.atoms[a1].vs
+        lvs  = dt.atoms[a1].lvs
+        nnb  = length(inds)
+
+        for i in 1:nnb
+            vi = vs[i]
+            for j in 1:nnb
+                vj = vs[j]
+                # Only consider neighbor pairs within cutoff
+                (sqnorm(vi - vj) < rc_sq) || continue
+                l += 1
+
+                # Find matching UC triplet by relative vectors (within tol)
+                ifc_idx = -1
+                for (idx, t) in enumerate(get_interactions(fc, uca))
+                    (sqnorm(t.rv2 - vi) < lo_sqtol) || continue
+                    (sqnorm(t.rv3 - vj) < lo_sqtol) || continue
+                    ifc_idx = idx
+                    break
+                end
+
+                if ifc_idx == -1
+                    error("Could not locate triplet; cells/mapping likely inconsistent.")
+                end
+
+                triplets[l] = FC3Data{T}(
+                    SVector(a1, inds[i], inds[j]),
+                    SVector(SVector{3,T}(0,0,0), lvs[i], lvs[j]),
+                    SVector{3,T}(0,0,0),
+                    vi,
+                    vj,
+                    dt.atoms[a1].ns[i],
+                    dt.atoms[a1].ns[j],
+                    fc.atoms[uca].triplets[ifc_idx].ifcs
+                )
+            end
+        end
+
+        (l == n_uc_triplets) || error("Inconsistent number of triplets for atom $a1: got $l, expected $n_uc_triplets")
+        data[a1] = AtomFC3{T, n_uc_triplets}(SVector{n_uc_triplets}(triplets))
+    end
+
+    return IFCs{3,T}(na_ss, fc.r_cut, data)
+end
+
+
 function remap(
         fc::IFCs{4,T},
-        dt::DistanceTable{T},
-        s2u::AbstractVector{<:Integer},
-        L_uc::AbstractMatrix{T}
+        sc::CrystalStructure{T},
+        s2u::AbstractVector{<:Integer};
+        n_threads::Integer = Threads.nthreads()
     ) where {T}
 
     rc = zero(T)
@@ -92,69 +178,65 @@ function remap(
         rc = max(rc, sqrt(sqnorm(q.rv3)))
         rc = max(rc, sqrt(sqnorm(q.rv4)))
     end
-    rc_sq = rc^2
 
-    KEY_TYPE = Tuple{Int, Int, Int, SVector{3, Int16}, SVector{3, Int16}, SVector{3,Int16}}
-    VALUE_TYPE = SArray{Tuple{3,3,3,3}, T}
-    all_luts = Dict{Int, Dict{KEY_TYPE, VALUE_TYPE}}()
+    rc_sq = rc*rc + 10*lo_sqtol
 
-    data  = AtomFC4{T}[]
+    dt = make_distance_table(sc, rc + 10*lo_tol; include_self = true)
+
     na_ss = length(dt.atoms)
+    data  = Vector{AtomFC4{T}}(undef, na_ss)
 
-    # 3) per supercell atom
-    for a1 in 1:na_ss
+    @tasks for a1 in 1:na_ss
+        @set ntasks=n_threads
+
         uca = s2u[a1]
-        n_uc_quartets = n_neighbors(fc.atoms[uca])
 
-        lut = get!(all_luts, uca) do
-            build_uc_quartet_lookup_int(fc, uca, L_uc)
-        end
+        # The corresponding atom in the unitcell has this
+        # many interactions, so we expect atom `a1` to have
+        # the same number of interactions
+        n_uc_quartets = length(fc.atoms[uca])
 
         l = 0
         quartets = Vector{FC4Data{T}}(undef, n_uc_quartets)
 
         inds = dt.atoms[a1].inds
-        vs   = dt.atoms[a1].vs     # Cartesian min-image vectors (Å)
+        vs   = dt.atoms[a1].vs
         lvs = dt.atoms[a1].lvs
-        ns   = dt.atoms[a1].ns     # integer image flags (same basis as UC LUT)
         nnb  = length(inds)
 
         @inbounds for i in 1:nnb
             vi  = vs[i]
-            ii  = inds[i]
-            lvi = lvs[i]
-            n2  = ns[i]
-
             for j in 1:nnb
                 vj  = vs[j]
-                (sqnorm(vi - vj) <= rc_sq) || continue
-                jj  = inds[j]
-                lvj = lvs[j]
-                n3  = ns[j]
-
+                (sqnorm(vi - vj) < rc_sq) || continue
                 for k in 1:nnb
                     vk  = vs[k]
-                    (sqnorm(vj - vk) <= rc_sq) || continue
-                    (sqnorm(vi - vk) <= rc_sq) || continue
-                    kk  = inds[k]
-                    n4  = ns[k]
-
-                    # integer key: (unit-cell neighbor index, integer image flags)
-                    key = (s2u[ii], s2u[jj], s2u[kk], n2, n3, n4)
-
-                    ifcs = get(lut, key, nothing)
-                    ifcs === nothing && error("No UC quartet for a1=$a1 (key=$(key))")
-
+                    (sqnorm(vj - vk) < rc_sq) || continue
+                    (sqnorm(vi - vk) < rc_sq) || continue
                     l += 1
 
+                    ifc_idx = -1
+                    for (idx, q) in enumerate(get_interactions(fc, uca))
+                        (sqnorm(q.rv2 - vi) <= lo_sqtol) || continue
+                        (sqnorm(q.rv3 - vj) <= lo_sqtol) || continue
+                        (sqnorm(q.rv4 - vk) <= lo_sqtol) || continue
+                        ifc_idx = idx
+                        break
+                    end
+
+                    if ifc_idx == -1
+                        error("Could not locate quartet, should be impossible")
+                    end
+
                     quartets[l] = FC4Data{T}( 
-                        SVector(a1, ii, jj, kk), 
-                        SVector(SVector{3,Int}(0,0,0), lvi, lvj, lvs[k]),
+                        SVector(a1, inds[i], inds[j], inds[k]), 
+                        SVector(SVector{3,T}(0,0,0), lvs[i], lvs[j], lvs[k]),
                         SVector{3,T}(0,0,0), 
-                        vi, 
-                        vj,
-                        vk,
-                        ifcs
+                        vi, vj, vk,
+                        dt.atoms[a1].ns[i],
+                        dt.atoms[a1].ns[j],
+                        dt.atoms[a1].ns[k],
+                        fc.atoms[uca].quartets[ifc_idx].ifcs
                     )
 
                 end
@@ -162,7 +244,7 @@ function remap(
         end
 
         (l == n_uc_quartets) || error("Inconsistent number of quartets for atom $a1: got $l, expected $n_uc_quartets")
-        push!(data, AtomFC4{T, n_uc_quartets}(SVector{n_uc_quartets}(quartets)))
+        data[a1] = AtomFC4{T, n_uc_quartets}(SVector{n_uc_quartets}(quartets))
     end
 
     return IFCs{4, T}(na_ss, sqrt(rc_sq), data)

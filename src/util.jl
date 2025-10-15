@@ -4,14 +4,48 @@ to_frac_coords(cell::AbstractMatrix{L}, position::AbstractVector{L}) where L = m
 # lattice vecs are columns of cell matrix
 to_cart_coords(cell::AbstractMatrix{L}, position::AbstractVector{L}) where L = cell * position
 
-# Helper functions
+sqnorm(v::AbstractVector) = dot(v, v)
+
+
+##########################################
+# Stuff for reading forceconstant files #
+##########################################
+
 readline_skip_text!(io, T) = parse(T, first(split(strip(readline(io)))))
 
-function read_vec3!(io, T)
+chop3(v::SVector{3,T}, chop_tol::T) where T = SVector{3,T}(ntuple(i -> (abs(v[i]) < chop_tol ? zero(T) : v[i]), 3))
+
+
+@inline function read_svec3!(io, ::Type{T}) where T
     xs = split(strip(readline(io)))
-    @assert length(xs) == 3 "Expected 3 components for a 3-vector."
-    SVector{3,T}(parse.(T, xs))
+    return SVector{3,T}(parse.(T, xs))
 end
+
+@inline  function read_vec3!(io, out::AbstractVector{T}) where T
+    out .= parse.(T, split(strip(readline(io))))
+    return out
+end
+
+@inline  function read_tensor3!(io, ::Type{T}) where T
+    M = @MArray zeros(T, 3, 3, 3)
+    for ii in 1:3, jj in 1:3
+        @views read_vec3!(io, M[ii, jj, :])
+    end
+    return SArray{Tuple{3,3,3},T}(M)
+end
+
+@inline  function read_tensor4!(io, ::Type{T}) where T
+    M = @MArray zeros(T, 3, 3, 3, 3)
+    for ii in 1:3, jj in 1:3, kk in 1:3
+        @views read_vec3!(io, M[ii, jj, kk, :])
+    end
+    return SArray{Tuple{3,3,3,3},T}(M)
+end
+
+
+##################################
+# Stuff for reading POSCAR FILES #
+##################################
 
 function read_poscar_symbol_block(path::String)
 
@@ -38,7 +72,7 @@ function read_poscar_cell(path::String, ::Type{T} = Float64) where T
         lv2 = scale .* parse.(T, split(strip(readline(f))))
         lv3 = scale .* parse.(T, split(strip(readline(f))))
 
-        cell = hcat(lv1, lv2, lv3) # cell vecs as columns
+        cell = SMatrix{3,3,T}(hcat(lv1, lv2, lv3)) # cell vecs as columns
 
         readline(f) # skip species line
 

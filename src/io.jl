@@ -28,9 +28,9 @@ function read_ifc2(
 
     
     function read_mat3_rows!(io) 
-        r1 = read_vec3!(io, T)
-        r2 = read_vec3!(io, T)
-        r3 = read_vec3!(io, T)
+        r1 = read_svec3!(io, T)
+        r2 = read_svec3!(io, T)
+        r3 = read_svec3!(io, T)
         M = hcat(r1, r2, r3)'   # r1 is first row, etc.
         return SMatrix{3,3,T}(M)     
     end
@@ -40,11 +40,13 @@ function read_ifc2(
     @assert size(L_uc) == (3,3) "Lattice A must be 3×3."
 
     max_rcut = zero(T)
+    lv1_frac = SVector{3, T}(0,0,0)
 
     data = AtomFC2{T}[]
 
     open(path, "r") do io
         na = readline_skip_text!(io, Int) # number of atoms in unit cell
+        resize!(data, na)
 
         # cross-check given positions
         @assert length(r_frac_uc) == na "r_frac_uc has length $(length(r_frac_uc)) but file says there are $(na) atoms in the unitcell."
@@ -57,14 +59,11 @@ function read_ifc2(
             pair_data = Vector{FC2Data{T}}(undef, n_neighbors) 
             for i in 1:n_neighbors
                 a2 = readline_skip_text!(io, Int) # unitcell index of neighbor
-                lv2_frac = read_vec3!(io, T)
+                lv2_frac = read_svec3!(io, T)
                 ifcs = read_mat3_rows!(io)
 
-                # Fortran routine uses lv1 == 0
-                lv1_frac = SVector{3,T}(0,0,0)
-
                 # frac positions of the two atoms in their image cells
-                v1_frac = lv1_frac + SVector{3,T}(r_frac_uc[a1])
+                v1_frac = r_frac_uc[a1] # + lv1_frac 
                 v2_frac = lv2_frac + SVector{3,T}(r_frac_uc[a2])
 
                 # Convert to Cartesian
@@ -78,22 +77,24 @@ function read_ifc2(
 
                 max_rcut = max(max_rcut, norm(r_cart))
 
+                # Calculate image flags
+                n2 = SVector{3,Int16}(round.(Int16, v2_frac - v1_frac))
+
                 pair_data[i] = FC2Data{T}(
                     SVector{2,Int}(a1, a2),
                     SVector{2,SVector{3,T}}(lv1_cart, lv2_cart),
                     r_cart,
+                    n2,
                     ifcs
                 )
             end
             
-            # Would be nice to not have to copy into SVector here
-            push!(data, AtomFC2{T, n_neighbors}(SVector{n_neighbors}(pair_data)))
+            data[a1] = AtomFC2{T}(pair_data)
         end
 
         # technically theres more polar stuff, but ignore that for now
 
-        r_cut = max_rcut + sqrt(eps(T))
-        println(typeof(data))
+        r_cut = max_rcut + lo_sqtol
         return IFCs{2, T}(na, r_cut, data)
 
     end
@@ -118,36 +119,30 @@ function read_ifc3(ifc3_path::AbstractString, ucposcar_path::AbstractString)
     return read_ifc3(ifc3_path, x_frac, cell)
 end
 
-function read_ifc3(path::AbstractString,
-                           r_frac_uc::AbstractVector{SVector{3,T}},
-                           L_uc::AbstractMatrix{T};
-                           chop_tol::T = T(1e-13)) where {T<:Real}
+function read_ifc3(
+        path::AbstractString,
+        r_frac_uc::AbstractVector{SVector{3,T}},
+        L_uc::AbstractMatrix{T};
+        chop_tol::T = T(1e-13)
+    ) where {T<:Real}
 
-    @assert size(L_uc) == (3,3) "Lattice A must be 3×3."
-
-    # local helpers (reuse your global readline_skip_text! / read_vec3!)
-    chop3(v::SVector{3,T}) = SVector{3,T}(ntuple(i -> (abs(v[i]) < chop_tol ? zero(T) : v[i]), 3))
-
-    # Read 3×3×3 tensor in the same order as Fortran:
-    # do ii=1:3; do jj=1:3; read v(1:3); m(ii,jj,:) = v
-    function read_tensor3!(io)::SArray{Tuple{3,3,3},T}
-        M = Array{T,3}(undef, 3, 3, 3)
-        for ii in 1:3, jj in 1:3
-            v = read_vec3!(io, T)
-            @inbounds M[ii, jj, 1] = v[1]
-            @inbounds M[ii, jj, 2] = v[2]
-            @inbounds M[ii, jj, 3] = v[3]
-        end
-        return SArray{Tuple{3,3,3},T}(M)
-    end
+    @assert size(L_uc) == (3,3) "Lattice must be 3×3."
 
     data = AtomFC3{T}[]
     max_rcut = zero(T)
+
+    v1_frac = MVector{3, T}(0,0,0)
+    v2_frac = MVector{3,T}(0,0,0)
+    v3_frac = MVector{3,T}(0,0,0)
+
+    L = SMatrix{3,3}(L_uc)
 
     open(path, "r") do io
         na = readline_skip_text!(io, Int)
         @assert length(r_frac_uc) == na "r_frac_uc length $(length(r_frac_uc)) but file says na=$na."
         _cutoff_ignored = readline_skip_text!(io, T)  # recomputed below
+
+        resize!(data, na)
 
         for a1 in 1:na
             n_tr = readline_skip_text!(io, Int)
@@ -161,34 +156,38 @@ function read_ifc3(path::AbstractString,
                 # Fortran stores i1 explicitly; in the routine it equals a1. Keep and sanity-check.
                 @assert i1 == a1 "Triplet central index mismatch: got i1=$i1 for a1=$a1."
 
-                lv1_frac = read_vec3!(io, T)
-                lv2_frac = read_vec3!(io, T)
-                lv3_frac = read_vec3!(io, T)
+                lv1_frac = read_svec3!(io, T)
+                lv2_frac = read_svec3!(io, T)
+                lv3_frac = read_svec3!(io, T)
 
-                ifcs = read_tensor3!(io)  # SArray{Tuple{3,3,3},T}
+                ifcs = read_tensor3!(io, T)  # SArray{Tuple{3,3,3},T}
 
                 # Fractional positions of the three atoms in their image cells
-                v1_frac = lv1_frac + r_frac_uc[a1]
-                v2_frac = lv2_frac + r_frac_uc[i2]
-                v3_frac = lv3_frac + r_frac_uc[i3]
+                v1_frac .= lv1_frac + r_frac_uc[a1]
+                v2_frac .= lv2_frac + r_frac_uc[i2]
+                v3_frac .= lv3_frac + r_frac_uc[i3]
 
                 # Convert to Cartesian
-                lv1_cart = SVector{3,T}(L_uc * lv1_frac)
-                lv2_cart = SVector{3,T}(L_uc * lv2_frac)
-                lv3_cart = SVector{3,T}(L_uc * lv3_frac)
+                lv1_cart = L * lv1_frac
+                lv2_cart = L * lv2_frac
+                lv3_cart = L * lv3_frac
 
-                v1 = SVector{3,T}(L_uc * v1_frac)
-                v2 = SVector{3,T}(L_uc * v2_frac)
-                v3 = SVector{3,T}(L_uc * v3_frac)
+                v1 = L * v1_frac
+                v2 = L * v2_frac
+                v3 = L * v3_frac
 
                 # Relative vectors (Fortran: rv1=0, rv2=v2-v1, rv3=v3-v1)
                 rv1 = SVector{3,T}(0, 0, 0)
-                rv2 = chop3(v2 - v1)
-                rv3 = chop3(v3 - v1)
+                rv2 = chop3(v2 - v1, chop_tol)
+                rv3 = chop3(v3 - v1, chop_tol)
 
-                lv1_cart = chop3(lv1_cart)
-                lv2_cart = chop3(lv2_cart)
-                lv3_cart = chop3(lv3_cart)
+                lv1_cart = chop3(lv1_cart, chop_tol)
+                lv2_cart = chop3(lv2_cart, chop_tol)
+                lv3_cart = chop3(lv3_cart, chop_tol)
+
+                # Image flags
+                n2 = SVector{3,Int16}(round.(Int16, v2_frac - v1_frac))
+                n3 = SVector{3,Int16}(round.(Int16, v3_frac - v1_frac))
 
                 # Cutoff per Fortran: max(||rv2||, ||rv3||, ||rv3 - rv2||)
                 max_rcut = max(max_rcut, norm(rv2))
@@ -199,14 +198,15 @@ function read_ifc3(path::AbstractString,
                     SVector{3,Int}(i1, i2, i3),
                     SVector{3,SVector{3,T}}(lv1_cart, lv2_cart, lv3_cart),
                     rv1, rv2, rv3,
+                    n2, n3,
                     ifcs
                 )
             end
 
-            push!(data, AtomFC3{T, n_tr}(SVector{n_tr}(trip_data)))
+            data[a1] = AtomFC3{T}(trip_data)
         end
 
-        r_cut = max_rcut + sqrt(eps(T))
+        r_cut = max_rcut + lo_sqtol
         return IFCs{3, T}(na, r_cut, data)
     end
 end
@@ -237,26 +237,14 @@ function read_ifc4(path::AbstractString,
 
     @assert size(L_uc) == (3,3) "Lattice A must be 3×3."
 
-    chop3(v::SVector{3,T}) = SVector{3,T}(ntuple(i -> (abs(v[i]) < chop_tol ? zero(T) : v[i]), 3))
-
-    # Fortran loop order:
-    # do ii=1:3; do jj=1:3; do kk=1:3; read v0(1:3); m(ii,jj,kk,:) = v0
-    function read_tensor4!(io)::SArray{Tuple{3,3,3,3},T}
-        M = Array{T,4}(undef, 3,3,3,3)
-        for ii in 1:3, jj in 1:3, kk in 1:3
-            v0 = read_vec3!(io, T)
-            @inbounds M[ii,jj,kk,1] = v0[1]
-            @inbounds M[ii,jj,kk,2] = v0[2]
-            @inbounds M[ii,jj,kk,3] = v0[3]
-        end
-        return SArray{Tuple{3,3,3,3},T}(M)
-    end
-
     data = AtomFC4{T}[]
-    max_rcut = zero(T)
+    max_rc_sq = zero(T)
+
+    L = SMatrix{3,3}(L_uc)
 
     open(path, "r") do io
         na = readline_skip_text!(io, Int)
+        resize!(data, na)
         @assert length(r_frac_uc) == na "r_frac_uc length $(length(r_frac_uc)) but file says na=$na."
         _cutoff_ignored = readline_skip_text!(io, T)  # recomputed below
 
@@ -264,19 +252,19 @@ function read_ifc4(path::AbstractString,
             n_quart = readline_skip_text!(io, Int)
             quartets = Vector{FC4Data{T}}(undef, n_quart)
 
-            for i in 1:n_quart
+            @sync for i in 1:n_quart
                 i1 = readline_skip_text!(io, Int)
                 i2 = readline_skip_text!(io, Int)
                 i3 = readline_skip_text!(io, Int)
                 i4 = readline_skip_text!(io, Int)
                 @assert i1 == a1 "Quartet central index mismatch: got i1=$i1 for a1=$a1."
 
-                lv1_frac = read_vec3!(io, T)
-                lv2_frac = read_vec3!(io, T)
-                lv3_frac = read_vec3!(io, T)
-                lv4_frac = read_vec3!(io, T)
+                lv1_frac = read_svec3!(io, T)
+                lv2_frac = read_svec3!(io, T)
+                lv3_frac = read_svec3!(io, T)
+                lv4_frac = read_svec3!(io, T)
 
-                ifcs = read_tensor4!(io)  # SArray{Tuple{3,3,3,3},T}
+                ifcs = read_tensor4!(io, T)  # SArray{Tuple{3,3,3,3},T}
 
                 # fractional positions including image shifts
                 v1_frac = lv1_frac + r_frac_uc[a1]
@@ -285,47 +273,196 @@ function read_ifc4(path::AbstractString,
                 v4_frac = lv4_frac + r_frac_uc[i4]
 
                 # Cartesian shifts and positions
-                lv1_cart = SVector{3,T}(L_uc * lv1_frac)
-                lv2_cart = SVector{3,T}(L_uc * lv2_frac)
-                lv3_cart = SVector{3,T}(L_uc * lv3_frac)
-                lv4_cart = SVector{3,T}(L_uc * lv4_frac)
+                lv1_cart = L * lv1_frac
+                lv2_cart = L * lv2_frac
+                lv3_cart = L * lv3_frac
+                lv4_cart = L * lv4_frac
 
-                v1 = SVector{3,T}(L_uc * v1_frac)
-                v2 = SVector{3,T}(L_uc * v2_frac)
-                v3 = SVector{3,T}(L_uc * v3_frac)
-                v4 = SVector{3,T}(L_uc * v4_frac)
+                v1 = L * v1_frac
+                v2 = L * v2_frac
+                v3 = L * v3_frac
+                v4 = L * v4_frac
 
                 # relative vectors (Fortran: rv1=0)
                 rv1 = SVector{3,T}(0,0,0)
-                rv2 = chop3(v2 - v1)
-                rv3 = chop3(v3 - v1)
-                rv4 = chop3(v4 - v1)
+                rv2 = chop3(v2 - v1, chop_tol)
+                rv3 = chop3(v3 - v1, chop_tol)
+                rv4 = chop3(v4 - v1, chop_tol)
 
-                lv1_cart = chop3(lv1_cart)
-                lv2_cart = chop3(lv2_cart)
-                lv3_cart = chop3(lv3_cart)
-                lv4_cart = chop3(lv4_cart)
+                lv1_cart = chop3(lv1_cart, chop_tol)
+                lv2_cart = chop3(lv2_cart, chop_tol)
+                lv3_cart = chop3(lv3_cart, chop_tol)
+                lv4_cart = chop3(lv4_cart, chop_tol)
+
+                # Image flags
+                n2 = round.(Int16, v2_frac .- v1_frac)
+                n3 = round.(Int16, v3_frac .- v1_frac)
+                n4 = round.(Int16, v4_frac .- v1_frac)
 
                 # cutoff per Fortran
-                max_rcut = max(max_rcut, norm(rv2))
-                max_rcut = max(max_rcut, norm(rv3))
-                max_rcut = max(max_rcut, norm(rv4))
-                max_rcut = max(max_rcut, norm(rv2 - rv3))
-                max_rcut = max(max_rcut, norm(rv2 - rv4))
-                max_rcut = max(max_rcut, norm(rv3 - rv4))
+                max_rc_sq = max(max_rc_sq, sqnorm(rv2))
+                max_rc_sq = max(max_rc_sq, sqnorm(rv3))
+                max_rc_sq = max(max_rc_sq, sqnorm(rv4))
+                max_rc_sq = max(max_rc_sq, sqnorm(rv2 - rv3))
+                max_rc_sq = max(max_rc_sq, sqnorm(rv2 - rv4))
+                max_rc_sq = max(max_rc_sq, sqnorm(rv3 - rv4))
 
                 quartets[i] = FC4Data{T}(
                     SVector{4,Int}(i1, i2, i3, i4),
                     SVector{4,SVector{3,T}}(lv1_cart, lv2_cart, lv3_cart, lv4_cart),
                     rv1, rv2, rv3, rv4,
+                    n2, n3, n4,
                     ifcs
                 )
             end
 
-            push!(data, AtomFC4{T, n_quart}(SVector{n_quart}(quartets)))
+            data[a1] = AtomFC4{T}(quartets)
         end
 
-        r_cut = max_rcut + sqrt(eps(T))
+        r_cut = sqrt(max_rc_sq) + lo_sqtol
         return IFCs{4, T}(na, r_cut, data)
     end
 end
+
+
+
+########
+# """
+# Scan once to find [start,end] byte offsets (1-based codeunit indices)
+# for each atom block in an IFC3 text file. Uses your existing helpers.
+# """
+# function index_ifc3_blocks(str::String, ::Type{T}) where {T}
+#     io = IOBuffer(str)
+#     # Header
+#     na = readline_skip_text!(io, Int)
+#     _  = readline_skip_text!(io, T)   # cutoff (ignored)
+
+#     starts = Vector{Int}(undef, na)
+#     ends   = Vector{Int}(undef, na)
+
+#     for a1 in 1:na
+#         starts[a1] = position(io) + 1  # next read starts here
+
+#         ntr = readline_skip_text!(io, Int)
+
+#         # Skip this atom’s triplets quickly using your existing readers
+#         for _ in 1:ntr
+#             _i1 = readline_skip_text!(io, Int)
+#             _i2 = readline_skip_text!(io, Int)
+#             _i3 = readline_skip_text!(io, Int)
+
+#             _lv1 = read_svec3!(io, T)
+#             _lv2 = read_svec3!(io, T)
+#             _lv3 = read_svec3!(io, T)
+
+#             # 3×3×3 tensor in your Fortran order
+#             for __ in 1:3, ___ in 1:3
+#                 _v = read_svec3!(io, T)
+#                 # no need to store; just advance the stream
+#             end
+#         end
+
+#         ends[a1] = position(io)        # last byte consumed by this block
+#     end
+
+#     return starts, ends, na
+# end
+
+
+# function read_ifc3_parallel(path::AbstractString,
+#                            r_frac_uc::AbstractVector{SVector{3,T}},
+#                            L_uc::AbstractMatrix{T};
+#                            chop_tol::T = T(1e-13)) where {T<:Real}
+
+#     @assert size(L_uc) == (3,3) "Lattice must be 3×3."
+
+#     # local helpers (reuse your global readline_skip_text! / read_svec3!)
+#     chop3(v::SVector{3,T}) = SVector{3,T}(ntuple(i -> (abs(v[i]) < chop_tol ? zero(T) : v[i]), 3))
+
+#     # Read 3×3×3 tensor in the same order as Fortran:
+#     # do ii=1:3; do jj=1:3; read v(1:3); m(ii,jj,:) = v
+#     function read_tensor3!(io)
+#         M = Array{T,3}(undef, 3, 3, 3)
+#         for ii in 1:3, jj in 1:3
+#             v = read_svec3!(io, T)
+#             @inbounds M[ii, jj, 1] = v[1]
+#             @inbounds M[ii, jj, 2] = v[2]
+#             @inbounds M[ii, jj, 3] = v[3]
+#         end
+#         return SArray{Tuple{3,3,3},T}(M)
+#     end
+
+#     data = AtomFC3{T}[]
+#     max_rcut = zero(T)
+
+#     open(path, "r") do io
+#         na = readline_skip_text!(io, Int)
+#         @assert length(r_frac_uc) == na "r_frac_uc length $(length(r_frac_uc)) but file says na=$na."
+#         _cutoff_ignored = readline_skip_text!(io, T)  # recomputed below
+
+#         for a1 in 1:na
+#             n_tr = readline_skip_text!(io, Int)
+#             trip_data = Vector{FC3Data{T}}(undef, n_tr)
+
+#             for i in 1:n_tr
+#                 i1 = readline_skip_text!(io, Int)
+#                 i2 = readline_skip_text!(io, Int)
+#                 i3 = readline_skip_text!(io, Int)
+
+#                 # Fortran stores i1 explicitly; in the routine it equals a1. Keep and sanity-check.
+#                 @assert i1 == a1 "Triplet central index mismatch: got i1=$i1 for a1=$a1."
+
+#                 lv1_frac = read_svec3!(io, T)
+#                 lv2_frac = read_svec3!(io, T)
+#                 lv3_frac = read_svec3!(io, T)
+
+#                 ifcs = read_tensor3!(io)  # SArray{Tuple{3,3,3},T}
+
+#                 # Fractional positions of the three atoms in their image cells
+#                 v1_frac = lv1_frac + r_frac_uc[a1]
+#                 v2_frac = lv2_frac + r_frac_uc[i2]
+#                 v3_frac = lv3_frac + r_frac_uc[i3]
+
+#                 # Convert to Cartesian
+#                 lv1_cart = SVector{3,T}(L_uc * lv1_frac)
+#                 lv2_cart = SVector{3,T}(L_uc * lv2_frac)
+#                 lv3_cart = SVector{3,T}(L_uc * lv3_frac)
+
+#                 v1 = SVector{3,T}(L_uc * v1_frac)
+#                 v2 = SVector{3,T}(L_uc * v2_frac)
+#                 v3 = SVector{3,T}(L_uc * v3_frac)
+
+#                 # Relative vectors (Fortran: rv1=0, rv2=v2-v1, rv3=v3-v1)
+#                 rv1 = SVector{3,T}(0, 0, 0)
+#                 rv2 = chop3(v2 - v1)
+#                 rv3 = chop3(v3 - v1)
+
+#                 lv1_cart = chop3(lv1_cart)
+#                 lv2_cart = chop3(lv2_cart)
+#                 lv3_cart = chop3(lv3_cart)
+
+#                 # Image flags
+#                 n2 = SVector{3,Int16}(round.(Int16, v2_frac .- v1_frac))
+#                 n3 = SVector{3,Int16}(round.(Int16, v3_frac .- v1_frac))
+
+#                 # Cutoff per Fortran: max(||rv2||, ||rv3||, ||rv3 - rv2||)
+#                 max_rcut = max(max_rcut, norm(rv2))
+#                 max_rcut = max(max_rcut, norm(rv3))
+#                 max_rcut = max(max_rcut, norm(rv3 - rv2))
+
+#                 trip_data[i] = FC3Data{T}(
+#                     SVector{3,Int}(i1, i2, i3),
+#                     SVector{3,SVector{3,T}}(lv1_cart, lv2_cart, lv3_cart),
+#                     rv1, rv2, rv3,
+#                     n2, n3,
+#                     ifcs
+#                 )
+#             end
+
+#             push!(data, AtomFC3{T, n_tr}(SVector{n_tr}(trip_data)))
+#         end
+
+#         r_cut = max_rcut + sqrt(eps(T))
+#         return IFCs{3, T}(na, r_cut, data)
+#     end
+# end
