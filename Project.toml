@@ -8,8 +8,10 @@ BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 CellListMap = "69e1c6dd-3888-40e6-b3c8-31ac5f578864"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 OhMyThreads = "67456a42-1dca-4109-a031-0a68de7e3ad5"
+PeriodicTable = "7b2266bf-644c-5ea3-82d8-af4bbd25a884"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 TensorOperations = "6aa20fa7-93e2-5fca-9bc0-fbd0db3c71a2"
 
 [compat]
 BenchmarkTools = "1.6.0"
+PeriodicTable = "1.2.1"

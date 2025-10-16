@@ -95,6 +95,8 @@ struct CrystalStructure
     x_frac::Vector{SVector{3,Float64}}
     x_cart::Vector{SVector{3,Float64}}
     species::Vector{Symbol}
+    m::Vector{Float64} # in amu
+    invsqrtm::Vector{Float64} # 1/sqrt(m)
     L::SMatrix{3,3,Float64}
     L_inv::SMatrix{3,3,Float64}
 end
@@ -127,7 +129,24 @@ function CrystalStructure(
     x_cart = to_cart_coords.(Ref(cell), x_frac)
 
     cell_inv = inv(cell)
+    m = ustrip.([periodic_table[s].atomic_mass for s in species])
+    invsqrtm = sqrt.(m)
 
-    return CrystalStructure(x_frac, x_cart, species, cell, cell_inv)
+    return CrystalStructure(x_frac, x_cart, species, m, invsqrtm, cell, cell_inv)
 
+end
+
+
+###################
+
+abstract type ConfigSettings end
+
+struct QuantumConfigSettings <: ConfigSettings
+    n_configs::Int
+    temperature::Float64
+end
+
+struct ClassicalConfigSettings <: ConfigSettings
+    n_configs::Int
+    temperature::Float64
 end
