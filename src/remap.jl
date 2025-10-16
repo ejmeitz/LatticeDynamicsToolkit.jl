@@ -1,16 +1,24 @@
 export remap
 
 
-# Assumes coords are all in box already
-function remap(
-        new_sc::CrystalStructure{T},
-        uc::CrystalStructure{T},
-        ifcs_old::Vararg{<:IFCs, N}
-    ) where {T <: AbstractFloat, N}
+function remap(new_sc::CrystalStructure, uc::CrystalStructure, ifcs::IFCs...)
+
+    remap_checks.(Ref(uc), ifcs)
+
+    ss_to_uc_map = map_super_to_unitcell(uc, new_sc) 
+
+    return remap.(ifcs, Ref(new_sc), Ref(ss_to_uc_map))
+
+end
+
+function remap_checks(
+        uc::CrystalStructure,
+        ifc::I
+    ) where {I <: IFCs}
 
     # Check input
     n_uc = length(uc)
-    n_uc_ifc = getproperty.(ifcs_old, :na)
+    n_uc_ifc = ifc.na
 
     if !allequal(n_uc_ifc)
         throw(ArgumentError("You passed ifcs_old built from different size unitcells $(n_uc_ifc). You must call remap on each separately."))
@@ -18,32 +26,28 @@ function remap(
     if !all(n_uc .== n_uc_ifc)
         throw(ArgumentError("Your force constants are calcualted on a unitcells with $(n_uc_ifc) atoms, but you passed a unitcell with $(n_uc) atoms."))
     end
-
-    ss_to_uc_map = map_super_to_unitcell(uc, new_sc) 
-
-    return remap.(ifcs_old, Ref(new_sc), Ref(ss_to_uc_map))
 end
 
 function remap(
-    fc::IFCs{2,T},
-    sc::CrystalStructure{T},
-    s2u::AbstractVector{<:Integer};
-) where {T}
-
+    fc::IFC2,
+    sc::CrystalStructure,
+    s2u::AbstractVector{Int};
+) 
 
     na_sc = length(sc)
-    data  = Vector{AtomFC2{T}}(undef, na_sc)
+    data  = Vector{Vector{FC2Data}}(undef, na_sc)
 
-    z3 = SVector{3,T}(0,0,0)
+    z3 = SVector{3,Float64}(0,0,0)
 
     @inbounds for a1 in 1:na_sc
 
         uca = s2u[a1]
         r0 = sc.x_cart[a1]
         
-        pairs = Vector{FC2Data{T}}(undef, length(fc.atoms[uca]))
+        pairs = get_interactions(fc, uca)
+        pair_data = Vector{FC2Data}(undef, length(pairs))
 
-        for (i,p) in enumerate(get_interactions(fc, uca))
+        for (i,p) in enumerate(pairs)
             # Target absolute position in SC: r1 = r0 + r
             r1_cart = p.r + r0
             r1_frac = clean_fractional_coordinates.(sc.L_inv * r1_cart)
@@ -69,7 +73,7 @@ function remap(
             n2 = SVector{3,Int16}(r2_lat)
 
             # Store as FC2Data: (i1,i2), (lv1=0, lv2), (rv1=0, rv2=r), and the 3×3 ifcs
-            pairs[i] = FC2Data{T}(
+            pair_data[i] = FC2Data(
                 SVector(a1, i2),
                 SVector(z3, lv2_cart),
                 p.r,
@@ -78,21 +82,21 @@ function remap(
             )
         end
 
-        data[a1] = AtomFC2{T}(pairs)
+        data[a1] = pair_data
     end
 
-    return IFCs{2,T}(na_sc, fc.r_cut, data)   # or IFCs{2,T}(na_ss, fc.r_cut, data) if you store the cutoff in fc
+    return IFC2(na_sc, fc.r_cut, data)   # or IFCs{2,T}(na_sc, fc.r_cut, data) if you store the cutoff in fc
 end
 
 
 function remap(
-    fc::IFCs{3,T},
-    sc::CrystalStructure{T},
-    s2u::AbstractVector{<:Integer};
-    n_threads::Integer = Threads.nthreads()
-) where {T}
+        fc::IFC3,
+        sc::CrystalStructure,
+        s2u::AbstractVector{Int};
+        n_threads::Integer = Threads.nthreads()
+    )
 
-    rc = zero(T)
+    rc = 0.0
     for uca in 1:fc.na, t in get_interactions(fc, uca)
         rc = max(rc, sqrt(sqnorm(t.rv2)))
         rc = max(rc, sqrt(sqnorm(t.rv3)))
@@ -102,20 +106,21 @@ function remap(
 
     dt = make_distance_table(sc, rc; include_self = true)
 
-    na_ss = length(dt.atoms)
+    na_sc = length(dt.atoms)
 
     # One entry per supercell atom
-    data = Vector{AtomFC3{T}}(undef, na_ss)
+    data = Vector{Vector{FC3Data}}(undef, na_sc)
 
-    @inbounds @tasks for a1 in 1:na_ss
+    @inbounds @tasks for a1 in 1:na_sc
         @set ntasks=n_threads
 
         uca = s2u[a1]
+        l = 0
 
         # Expect same # of triplets as its corresponding UC atom
-        n_uc_triplets = length(fc.atoms[uca])
-        l = 0
-        triplets = Vector{FC3Data{T}}(undef, n_uc_triplets)
+        triplets = get_interactions(fc, uca)
+        n_uc_triplets = length(triplets)
+        triplet_data = Vector{FC3Data}(undef, n_uc_triplets)
 
         inds = dt.atoms[a1].inds
         vs   = dt.atoms[a1].vs
@@ -132,7 +137,7 @@ function remap(
 
                 # Find matching UC triplet by relative vectors (within tol)
                 ifc_idx = -1
-                for (idx, t) in enumerate(get_interactions(fc, uca))
+                for (idx, t) in enumerate(triplets)
                     (sqnorm(t.rv2 - vi) < lo_sqtol) || continue
                     (sqnorm(t.rv3 - vj) < lo_sqtol) || continue
                     ifc_idx = idx
@@ -143,35 +148,35 @@ function remap(
                     error("Could not locate triplet; cells/mapping likely inconsistent.")
                 end
 
-                triplets[l] = FC3Data{T}(
+                triplet_data[l] = FC3Data(
                     SVector(a1, inds[i], inds[j]),
-                    SVector(SVector{3,T}(0,0,0), lvs[i], lvs[j]),
-                    SVector{3,T}(0,0,0),
+                    SVector(SVector{3,Float64}(0,0,0), lvs[i], lvs[j]),
+                    SVector{3,Float64}(0,0,0),
                     vi,
                     vj,
                     dt.atoms[a1].ns[i],
                     dt.atoms[a1].ns[j],
-                    fc.atoms[uca].triplets[ifc_idx].ifcs
+                    fc.atoms[uca][ifc_idx].ifcs
                 )
             end
         end
 
         (l == n_uc_triplets) || error("Inconsistent number of triplets for atom $a1: got $l, expected $n_uc_triplets")
-        data[a1] = AtomFC3{T, n_uc_triplets}(SVector{n_uc_triplets}(triplets))
+        data[a1] = triplet_data
     end
 
-    return IFCs{3,T}(na_ss, fc.r_cut, data)
+    return IFC3(na_sc, fc.r_cut, data)
 end
 
 
 function remap(
-        fc::IFCs{4,T},
-        sc::CrystalStructure{T},
-        s2u::AbstractVector{<:Integer};
+        fc::IFC4,
+        sc::CrystalStructure,
+        s2u::AbstractVector{Int};
         n_threads::Integer = Threads.nthreads()
-    ) where {T}
+    ) 
 
-    rc = zero(T)
+    rc = 0.0
     for uca in 1:fc.na, q in get_interactions(fc, uca)
         rc = max(rc, sqrt(sqnorm(q.rv2)))
         rc = max(rc, sqrt(sqnorm(q.rv3)))
@@ -182,21 +187,22 @@ function remap(
 
     dt = make_distance_table(sc, rc + 10*lo_tol; include_self = true)
 
-    na_ss = length(dt.atoms)
-    data  = Vector{AtomFC4{T}}(undef, na_ss)
+    na_sc = length(dt.atoms)
+    data  = Vector{Vector{FC4Data}}(undef, na_sc)
 
-    @tasks for a1 in 1:na_ss
+    @tasks for a1 in 1:na_sc
         @set ntasks=n_threads
 
         uca = s2u[a1]
 
+        quartets = get_interactions(fc, uca)
         # The corresponding atom in the unitcell has this
         # many interactions, so we expect atom `a1` to have
         # the same number of interactions
-        n_uc_quartets = length(fc.atoms[uca])
+        n_uc_quartets = length(quartets)
 
         l = 0
-        quartets = Vector{FC4Data{T}}(undef, n_uc_quartets)
+        quartet_data = Vector{FC4Data}(undef, n_uc_quartets)
 
         inds = dt.atoms[a1].inds
         vs   = dt.atoms[a1].vs
@@ -215,7 +221,7 @@ function remap(
                     l += 1
 
                     ifc_idx = -1
-                    for (idx, q) in enumerate(get_interactions(fc, uca))
+                    for (idx, q) in enumerate(quartets)
                         (sqnorm(q.rv2 - vi) <= lo_sqtol) || continue
                         (sqnorm(q.rv3 - vj) <= lo_sqtol) || continue
                         (sqnorm(q.rv4 - vk) <= lo_sqtol) || continue
@@ -227,15 +233,15 @@ function remap(
                         error("Could not locate quartet, should be impossible")
                     end
 
-                    quartets[l] = FC4Data{T}( 
+                    quartet_data[l] = FC4Data( 
                         SVector(a1, inds[i], inds[j], inds[k]), 
-                        SVector(SVector{3,T}(0,0,0), lvs[i], lvs[j], lvs[k]),
-                        SVector{3,T}(0,0,0), 
+                        SVector(SVector{3,Float64}(0,0,0), lvs[i], lvs[j], lvs[k]),
+                        SVector{3,Float64}(0,0,0), 
                         vi, vj, vk,
                         dt.atoms[a1].ns[i],
                         dt.atoms[a1].ns[j],
                         dt.atoms[a1].ns[k],
-                        fc.atoms[uca].quartets[ifc_idx].ifcs
+                        fc.atoms[uca][ifc_idx].ifcs
                     )
 
                 end
@@ -243,16 +249,16 @@ function remap(
         end
 
         (l == n_uc_quartets) || error("Inconsistent number of quartets for atom $a1: got $l, expected $n_uc_quartets")
-        data[a1] = AtomFC4{T, n_uc_quartets}(SVector{n_uc_quartets}(quartets))
+        data[a1] = quartet_data
     end
 
-    return IFCs{4, T}(na_ss, sqrt(rc_sq), data)
+    return IFC4(na_sc, sqrt(rc_sq), data)
 end
 
 """
     map_super_to_unitcell(
-        uc::CrystalStructure{T},
-        sc::CrystalStructure{T},
+        uc::CrystalStructure,
+        sc::CrystalStructure,
         tol::Real=1e-3,
     ) -> (s2u::Vector{Int}, translations::Vector{SVector{3,Int}})
 
@@ -261,24 +267,24 @@ Distances are computed in Å using the unit-cell lattice `L_uc`.
 - `tol` is in **Å** (e.g., 1e-3–1e-2 Å for slightly relaxed structures)
 """
 function map_super_to_unitcell(
-        uc::CrystalStructure{T},
-        sc::CrystalStructure{T},
+        uc::CrystalStructure,
+        sc::CrystalStructure,
         tol::Real=1e-3,
-    ) where {T <: AbstractFloat}
+    )
 
     n_uc = length(uc)
     n_sc = length(sc)
 
     # PBC wrap to [-0.5, 0.5) per component in fractional space
-    pbc_wrap(d::SVector{3,T}) = d .- round.(d)
+    pbc_wrap(d) = d .- round.(d)
 
     s2u = zeros(Int, n_sc)
     # translations = Vector{SVector{3,Int}}(undef, n_sc)
 
-    f_uc_raw = MVector{3, T}(0,0,0)
-    f_red = MVector{3, T}(0,0,0)
-    d_frac =  MVector{3, T}(0,0,0)
-    d_cart = MVector{3, T}(0,0,0)
+    f_uc_raw = MVector{3, Float64}(0,0,0)
+    f_red = MVector{3, Float64}(0,0,0)
+    d_frac =  MVector{3, Float64}(0,0,0)
+    d_cart = MVector{3, Float64}(0,0,0)
 
     M = inv(uc.L) * sc.L
     tol_sq = tol*tol
@@ -293,7 +299,7 @@ function map_super_to_unitcell(
         # t_ijk = SVector{3,Int}(round.(Int, Δ))  # translation in uc basis
 
         # nearest match in Å using uc lattice: distance = ‖L_uc * wrap(frac_diff)‖2
-        best_i, best_d_sq = 0, T(Inf)
+        best_i, best_d_sq = 0, Inf
         for i in 1:n_uc
             uc.species[i] == sc.species[j] || continue
             

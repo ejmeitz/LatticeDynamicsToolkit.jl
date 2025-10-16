@@ -8,17 +8,17 @@ function make_nl_bidirectional(nl::Vector{<:Tuple}, na::Int)
 end
 
 function make_distance_table(
-        crys::CrystalStructure{T},
-        r_cut::T;
+        crys::CrystalStructure,
+        r_cut::Float64;
         include_self::Bool = false
-    ) where {T <: AbstractFloat}
+    )
 
     # Returns List of (idx1, idx2, dist) cannot assume ordering
     nl_oneway = CellListMap.neighborlist(crys.x_cart, r_cut; unitcell = crys.L)
     nl = make_nl_bidirectional(nl_oneway, length(crys))
 
-    dtas = Vector{DistanceTableAtom{T}}(undef, length(crys))
-    Δf = MVector{3,T}(0,0,0)
+    dtas = Vector{DistanceTableAtom}(undef, length(crys))
+    Δf = MVector{3,Float64}(0,0,0)
     n = MVector{3,Int}(0,0,0)
 
     # Process into format similar to TDEP distance table
@@ -27,19 +27,19 @@ function make_distance_table(
         nbrs = nl[i]
         n_neighbors = length(nbrs) + (include_self ? 1 : 0)
 
-        vs = @SVector zeros(MVector{3,T}, n_neighbors)
-        lvs = @SVector zeros(MVector{3,T}, n_neighbors)
+        vs = @SVector zeros(MVector{3, Float64}, n_neighbors)
+        lvs = @SVector zeros(MVector{3, Float64}, n_neighbors)
         ns = @SVector zeros(MVector{3, Int16}, n_neighbors)
         inds  = @MVector zeros(Int, n_neighbors)
-        dists = @MVector zeros(T, n_neighbors)
+        dists = @MVector zeros(Float64, n_neighbors)
 
         k = 1
         if include_self
-            vs[k]    .= SVector{3,T}(0,0,0)
-            lvs[k]   .= SVector{3,T}(0,0,0)
+            vs[k]    .= SVector{3, Float64}(0,0,0)
+            lvs[k]   .= SVector{3, Float64}(0,0,0)
             ns[k]    .= SVector{3,Int16}(0,0,0)
             inds[k]  = i
-            dists[k] = zero(T)
+            dists[k] = 0.0
             k += 1
         end
 
@@ -57,7 +57,7 @@ function make_distance_table(
         end
 
 
-        dtas[i] = DistanceTableAtom{T, n_neighbors}(
+        dtas[i] = DistanceTableAtom{n_neighbors}(
             i,
             SVector(vs),
             SVector(lvs),
@@ -68,5 +68,5 @@ function make_distance_table(
 
     end
 
-    return DistanceTable{T}([dtas...])
+    return DistanceTable([dtas...])
 end

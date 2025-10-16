@@ -26,12 +26,24 @@ end
     return out
 end
 
+@inline function read_mat3_rows!(io, ::Type{T}) where T
+    r1 = read_svec3!(io, T)
+    r2 = read_svec3!(io, T)
+    r3 = read_svec3!(io, T)
+    M = hcat(r1, r2, r3)'   # r1 is first row, etc.
+<<<<<<< HEAD
+    return SMatrix{3, 3, T, 9}(M)     
+=======
+    return SMatrix{3,3,T}(M)     
+>>>>>>> 5baa900 (get rid of LOTS of type instability)
+end
+
 @inline  function read_tensor3!(io, ::Type{T}) where T
     M = @MArray zeros(T, 3, 3, 3)
     for ii in 1:3, jj in 1:3
         @views read_vec3!(io, M[ii, jj, :])
     end
-    return SArray{Tuple{3,3,3},T}(M)
+    return SArray{Tuple{3,3,3}, T, 3, 27}(M)
 end
 
 @inline  function read_tensor4!(io, ::Type{T}) where T
@@ -39,7 +51,7 @@ end
     for ii in 1:3, jj in 1:3, kk in 1:3
         @views read_vec3!(io, M[ii, jj, kk, :])
     end
-    return SArray{Tuple{3,3,3,3},T}(M)
+    return SArray{Tuple{3,3,3,3}, T, 4, 81}(M)
 end
 
 
@@ -63,16 +75,16 @@ function read_poscar_symbol_block(path::String)
 
 end
 
-function read_poscar_cell(path::String, ::Type{T} = Float64) where T
+function read_poscar_cell(path::String)
 
     return open(path, "r") do f
         readline(f)
-        scale = parse(T, readline(f))
-        lv1 = scale .* parse.(T, split(strip(readline(f))))
-        lv2 = scale .* parse.(T, split(strip(readline(f))))
-        lv3 = scale .* parse.(T, split(strip(readline(f))))
+        scale = parse(Float64, readline(f))
+        lv1 = scale .* parse.(Float64, split(strip(readline(f))))
+        lv2 = scale .* parse.(Float64, split(strip(readline(f))))
+        lv3 = scale .* parse.(Float64, split(strip(readline(f))))
 
-        cell = SMatrix{3,3,T}(hcat(lv1, lv2, lv3)) # cell vecs as columns
+        cell = SMatrix{3,3,Float64}(hcat(lv1, lv2, lv3)) # cell vecs as columns
 
         readline(f) # skip species line
 
@@ -84,20 +96,19 @@ function read_poscar_cell(path::String, ::Type{T} = Float64) where T
 end
 
 function read_poscar_positions(
-        path,
-        ::Type{T} = Float64;
+        path;
         ssposcar_is_frac::Bool = true,
-        store_frac_coords::Bool = false,
-    ) where {T <: AbstractFloat}
+        store_frac_coords::Bool = false
+    )
 
-    cell, n_atoms = read_poscar_cell(path, T)
+    cell, n_atoms = read_poscar_cell(path)
 
-    positions = zeros(SVector{3, T}, n_atoms)
+    positions = zeros(SVector{3, Float64}, n_atoms)
 
     convert_to_cart = (!store_frac_coords && ssposcar_is_frac)
 
-    K = (convert_to_cart ? cell : Matrix{T}(I, 3, 3))
-    parse_line = (line) -> SVector(K * parse.(T, split(strip(line))[1:3])...)
+    K = (convert_to_cart ? cell : Matrix{Float64}(I, 3, 3))
+    parse_line = (line) -> SVector(K * parse.(Float64, split(strip(line))[1:3])...)
 
 
 
@@ -121,20 +132,20 @@ function read_poscar_positions(
 end
 
 function read_poscar_data(
-        path, 
-        ::Type{FLOAT_TYPE} = Float64; 
+        path;
         ssposcar_is_frac::Bool = true,
         store_frac_coords::Bool = true
-    ) where {FLOAT_TYPE <: AbstractFloat}
+    )
 
     symbols, counts = read_poscar_symbol_block(path)
     species = reduce(vcat, [fill(s, c) for (s,c) in zip(symbols, counts)])
 
-    positions, cell = read_poscar_positions(path, FLOAT_TYPE;
-                                            ssposcar_is_frac = ssposcar_is_frac,
-                                            store_frac_coords = store_frac_coords)
+    positions, cell = read_poscar_positions(
+                            path;
+                            ssposcar_is_frac = ssposcar_is_frac,
+                            store_frac_coords = store_frac_coords
+                        )
     
-    cell = FLOAT_TYPE.(cell)
 
     return species, positions, cell
 
