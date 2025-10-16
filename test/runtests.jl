@@ -42,11 +42,8 @@ end
     
     ucposcar_path = joinpath(data_dir, "infile.ucposcar")
     ssposcar_path = joinpath(data_dir, "100K_5UC_remapped", "infile.ssposcar")
-<<<<<<< HEAD
     ssposcar_path_3UC = joinpath(data_dir, "100K_3UC", "infile.ssposcar")
 
-=======
->>>>>>> 5baa900 (get rid of LOTS of type instability)
 
     ifc2, ifc3, ifc4 = load_sw_ifcs(ucposcar_path)
 
@@ -56,11 +53,7 @@ end
     new_ifc2, new_ifc3, new_ifc4 = remap(sc, uc, ifc2, ifc3, ifc4)
 
     u = [@SVector rand(3) for i in 1:new_ifc2.na]
-<<<<<<< HEAD
     println(TDEPToolkit.energies(u, new_ifc2; fc3 = new_ifc3))
-=======
-    println(TDEPToolkit.energies_faithful(u, new_ifc2; fc3 = new_ifc3))
->>>>>>> 5baa900 (get rid of LOTS of type instability)
 
     ifc2_remapped_path = joinpath(data_dir, "100K_5UC_remapped", "outfile.forceconstant_remapped")
     ifc3_remapped_path = joinpath(data_dir, "100K_5UC_remapped", "outfile.forceconstant_thirdorder_remapped")

@@ -76,7 +76,7 @@ function energies(
     e3 /= 6.0
     e4 /= 24.0
 
-    return e2#, e3, e4
+    return e2, e3, e4
 end
 
 

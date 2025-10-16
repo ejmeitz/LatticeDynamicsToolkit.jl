@@ -20,11 +20,7 @@ struct FC3Data
     rv3::SVector{3, Float64}
     n2::SVector{3,Int16}
     n3::SVector{3,Int16}
-<<<<<<< HEAD
     ifcs::SArray{Tuple{3,3,3}, Float64, 3, 27}
-=======
-    ifcs::SArray{Tuple{3,3,3}, Float64}
->>>>>>> 5baa900 (get rid of LOTS of type instability)
 end
 
 struct FC4Data
@@ -37,11 +33,7 @@ struct FC4Data
     n2::SVector{3,Int16}
     n3::SVector{3,Int16}
     n4::SVector{3,Int16}
-<<<<<<< HEAD
     ifcs::SArray{Tuple{3,3,3,3}, Float64, 4, 81}
-=======
-    ifcs::SArray{Tuple{3,3,3,3}, Float64}
->>>>>>> 5baa900 (get rid of LOTS of type instability)
 end
 
 struct IFC2 <: IFCs

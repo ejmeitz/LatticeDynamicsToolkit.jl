@@ -31,11 +31,7 @@ end
     r2 = read_svec3!(io, T)
     r3 = read_svec3!(io, T)
     M = hcat(r1, r2, r3)'   # r1 is first row, etc.
-<<<<<<< HEAD
     return SMatrix{3, 3, T, 9}(M)     
-=======
-    return SMatrix{3,3,T}(M)     
->>>>>>> 5baa900 (get rid of LOTS of type instability)
 end
 
 @inline  function read_tensor3!(io, ::Type{T}) where T

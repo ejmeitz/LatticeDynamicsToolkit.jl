@@ -4,12 +4,6 @@ using LinearAlgebra
 using StaticArrays
 using CellListMap
 using OhMyThreads
-<<<<<<< HEAD
-=======
-using Bumper
-using TensorOperations
-using PrecompileTools
->>>>>>> 5baa900 (get rid of LOTS of type instability)
 
 const lo_tol = 1e-5
 const lo_sqtol = lo_tol^2
