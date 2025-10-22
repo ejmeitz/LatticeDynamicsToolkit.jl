@@ -1,7 +1,7 @@
 export energies, make_energy_dataset
 
 function energies(
-        u::Vector{SVector{3,Float64}},
+        u::AbstractVector{SVector{3,Float64}},
         fc2::IFC2;
         fc3::Union{Nothing,IFC3}=nothing,
         fc4::Union{Nothing,IFC4}=nothing,
@@ -121,7 +121,7 @@ function _make_energy_dataset(
     f = (config) -> energies(config, ifc2; fc3=ifc3, fc4=ifc4, n_threads=1)
 
     @info "Building Energy Dataset"
-    canonical_configs(
+    canonical_configs!(
         tep_energies,
         f,
         cc_settings,
@@ -131,7 +131,7 @@ function _make_energy_dataset(
         n_threads = n_threads
     )
 
-    return tep_energies
+    return Hartree_to_eV .* tep_energies
 
 end
 

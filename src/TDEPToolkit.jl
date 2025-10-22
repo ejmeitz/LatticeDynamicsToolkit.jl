@@ -6,6 +6,8 @@ using CellListMap
 using OhMyThreads
 import Unitful: ustrip
 import PeriodicTable
+using ProgressMeter
+import Random: randn!
 
 const periodic_table = PeriodicTable.elements
 
@@ -29,6 +31,9 @@ const emu_to_amu = 1.0/amu_to_emu
 const kB_eV = 8.6173303E-5
 const kB_Hartree = kB_eV*eV_to_Hartree
 
+const hbar_eV = 6.582119514E-16
+const hbar_Hartree = hbar_eV*eV_to_Hartree
+
 const forceconstant_2nd_eVA_to_HartreeBohr = eV_to_Hartree / (A_to_bohr^2)
 const forceconstant_3rd_eVA_to_HartreeBohr = eV_to_Hartree / (A_to_bohr^3)
 const forceconstant_4th_eVA_to_HartreeBohr = eV_to_Hartree / (A_to_bohr^4)
@@ -36,6 +41,9 @@ const forceconstant_4th_eVA_to_HartreeBohr = eV_to_Hartree / (A_to_bohr^4)
 const forceconstant_2nd_HartreeBohr_to_eVA = 1.0 / forceconstant_2nd_eVA_to_HartreeBohr
 const forceconstant_3rd_HartreeBohr_to_eVA = 1.0 / forceconstant_3rd_eVA_to_HartreeBohr
 const forceconstant_4th_HartreeBohr_to_eVA = 1.0 / forceconstant_4th_eVA_to_HartreeBohr
+
+const frequency_Hartree_to_THz=1e-12/(2*pi)/hbar_Hartree
+const frequency_THz_to_Hartree=1.0/frequency_Hartree_to_THz
 
 
 
@@ -45,6 +53,7 @@ include("modes.jl")
 include("distance_table.jl")
 include("io.jl")
 include("remap.jl")
+include("canonical_configs.jl")
 include("epot.jl")
 
 

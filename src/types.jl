@@ -130,8 +130,9 @@ function CrystalStructure(poscar_path::String)
 
     x_cart = to_cart_coords.(Ref(cell), x_frac)
 
+    # convert mass to electron mass units (emu)
     m = ustrip.([periodic_table[s].atomic_mass for s in species]) .* amu_to_emu 
-    invsqrtm = sqrt.(m)
+    invsqrtm = 1.0 ./ sqrt.(m)
 
     return CrystalStructure(x_frac, x_cart, species, m, invsqrtm, cell, cell_inv)
 end

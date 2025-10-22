@@ -42,7 +42,6 @@ function prepare(freqs, phi, D, atom_masses)
     return freqs_view, phi_view, atom_masses
 end
 
-
 function canonical_configs(CM::ConfigSettings, freqs::AbstractVector,
                          phi::AbstractMatrix, atom_masses::AbstractVector;
                          n_threads::Int = Threads.nthreads(), D::Int = 3)
@@ -184,7 +183,7 @@ function canonical_velocities(CM::ConfigSettings, freqs::AbstractVector,
 end
 
 # in place version that evaluates f on each generated config and stores the result in output
-# avoids allocating all configurations in RAM
+# avoids allocating all configurations in RAM. Expects f(::Vector{SVector{3, Float64}})
 function canonical_configs!(output, f::Function, CM::ConfigSettings, freqs::AbstractVector,
                          phi::AbstractMatrix, atom_masses::AbstractVector;
                          n_threads::Int = Threads.nthreads(), D::Int = 3)
@@ -218,7 +217,7 @@ function canonical_configs!(output, f::Function, CM::ConfigSettings, freqs::Abst
         tmp .*= randn_storage
 
         coord_storage .= vec(sum(tmp, dims=1))
-        output[n] = f(coord_storage)
+        output[n] = f(reinterpret(SVector{D, Float64}, coord_storage))
 
         next!(p)
     end

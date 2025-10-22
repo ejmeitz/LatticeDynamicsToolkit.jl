@@ -13,7 +13,7 @@ function dynmat_gamma(fc_sc::IFC2, sc::CrystalStructure)
         for pair in get_interactions(fc_sc, a1)
             a2 = pair.idxs[2]
             r2 = 3*(a2-1)
-            D[r1+1:r1+3: r2+1:r2+3] .= pair.ifcs .* (w1 * sc.invsqrtm[a2])  
+            D[r1+1:r1+3, r2+1:r2+3] .= pair.ifcs .* (w1 * sc.invsqrtm[a2])  
         end
     end
 

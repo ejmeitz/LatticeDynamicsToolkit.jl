@@ -75,11 +75,15 @@ end
     uc = CrystalStructure(ucposcar_path)
     sc = CrystalStructure(ssposcar_path)
 
-    n_configs = 10
-    temperature = 100.0
+    n_configs = 2
+    temperature = 1300.0
     settings = ClassicalConfigSettings(n_configs, temperature)
 
-    energies = TDEPToolkit.make_energy_dataset(
+    dynmat = TDEPToolkit.dynmat_gamma(ifc2_remapped, sc)
+    freqs_sq, phi = TDEPToolkit.get_modes(dynmat)
+    freqs_Thz = sqrt.(freqs_sq) .* TDEPToolkit.frequency_Hartree_to_THz
+
+    tep_energies = TDEPToolkit.make_energy_dataset(
         settings,
         uc,
         sc;
