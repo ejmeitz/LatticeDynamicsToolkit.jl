@@ -75,7 +75,7 @@ end
     uc = CrystalStructure(ucposcar_path)
     sc = CrystalStructure(ssposcar_path)
 
-    n_configs = 2
+    n_configs = 10_000
     temperature = 1300.0
     settings = ClassicalConfigSettings(n_configs, temperature)
 

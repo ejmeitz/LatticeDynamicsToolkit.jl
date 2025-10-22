@@ -199,7 +199,7 @@ function canonical_configs!(output, f::Function, CM::ConfigSettings, freqs::Abst
     # Pre-scale modes by their amplitudes
     phi_A = phi_view_T .* mean_amplitude_matrix # D*N_atoms x D*N_atoms - D
 
-    p = Progress(CM.n_configs; desc="Generating Disps", dt = 0.1, color = :magenta)
+    p = Progress(CM.n_configs; desc="Generating Disps", dt = 0.25, color = :magenta)
     @tasks for n in 1:CM.n_configs
         @set begin
             ntasks = n_threads

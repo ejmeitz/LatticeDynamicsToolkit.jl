@@ -1,5 +1,40 @@
 export energies, make_energy_dataset
 
+@inline function contract33!(out::MVector{3, T}, ifcs::SArray{Tuple{3,3,3},T,3,27},
+                           u2::SVector{3,T}, u3::SVector{3,T}) where {T}
+    @inbounds for i1 in 1:3
+        # accumulate per row j = i2
+        r1 = muladd(ifcs[i1,1,1],u3[1], muladd(ifcs[i1,1,2],u3[2], ifcs[i1,1,3]*u3[3]))
+        r2 = muladd(ifcs[i1,2,1],u3[1], muladd(ifcs[i1,2,2],u3[2], ifcs[i1,2,3]*u3[3]))
+        r3 = muladd(ifcs[i1,3,1],u3[1], muladd(ifcs[i1,3,2],u3[2], ifcs[i1,3,3]*u3[3]))
+        out[i1] = muladd(u2[1], r1, muladd(u2[2], r2, muladd(u2[3], r3, out[i1])))
+    end
+    return out
+end
+
+#    r = A[:,:,:,i4]·u4  →  3×3;   t = r·u3  → 3;   v[i1]+= dot(u2,t)
+@inline function contract44!(out::MVector{3,T}, quat::SArray{Tuple{3,3,3,3},T,4,81},
+                                u2::SVector{3,T}, u3::SVector{3,T}, u4::SVector{3,T}) where {T}
+    @inbounds for i1 in 1:3
+        # acc over i2 after contracting i4 then i3
+        acc = MVector{3,T}(0,0,0)
+        for i2 in 1:3
+            t = zero(T)
+            for i3 in 1:3
+                # r = dot(quat[i1,i2,i3,:], u4) with FMAs
+                r = muladd(quat[i1,i2,i3,3], u4[3],
+                    muladd(quat[i1,i2,i3,2], u4[2], quat[i1,i2,i3,1]*u4[1]))
+                t = muladd(r, u3[i3], t)
+            end
+            acc[i2] = t
+        end
+        # v[i1] += dot(u2, acc)
+        out[i1] = muladd(u2[3], acc[3], muladd(u2[2], acc[2], muladd(u2[1], acc[1], out[i1])))
+    end
+    return out
+end
+
+
 function energies(
         u::AbstractVector{SVector{3,Float64}},
         fc2::IFC2;
@@ -21,6 +56,7 @@ function energies(
         @set begin
             ntasks  = n_threads
             reducer = .+
+            scheduler = :static
         end
 
         @local v0 = MVector{3,Float64}(0,0,0)
@@ -44,9 +80,11 @@ function energies(
                 a3 = trip.idxs[3]; u3 = u[a3]
 
                 # einsum notation: V[i] = M[i, j, k] * u2[j] * u3[k]
-                for i1 in 1:3, i2 in 1:3, i3 in 1:3
-                    v0[i1] += trip.ifcs[i1,i2,i3] * u2[i2] * u3[i3]
-                end
+                # for i1 in 1:3, i2 in 1:3, i3 in 1:3
+                #     v0[i1] += trip.ifcs[i1,i2,i3] * u2[i2] * u3[i3]
+                # end
+
+                contract33!(v0, trip.ifcs, u2, u3)
 
             end
             e3_local += dot(v0, u[a1])
@@ -60,10 +98,12 @@ function energies(
                 a3 = quat.idxs[3]; u3 = u[a3]
                 a4 = quat.idxs[4]; u4 = u[a4]
 
-                # einsum notation: V[i] = M[i, j, k, l] * u2[j] * u3[k] * u4[l]
-                for i1 in 1:3, i2 in 1:3, i3 in 1:3, i4 in 1:3
-                    v0[i1] += quat.ifcs[i1,i2,i3,i4] * u2[i2] * u3[i3] * u4[i4]
-                end
+                #einsum notation: V[i] = M[i, j, k, l] * u2[j] * u3[k] * u4[l]
+                # for i1 in 1:3, i2 in 1:3, i3 in 1:3, i4 in 1:3
+                #     v0[i1] += quat.ifcs[i1,i2,i3,i4] * u2[i2] * u3[i3] * u4[i4]
+                # end
+
+                contract44!(v0, quat.ifcs, u2, u3, u4)
 
             end
             e4_local += dot(v0, u[a1])
