@@ -16,6 +16,7 @@ Inputs
 """
 function read_ifc2(ifc2_path::AbstractString, ucposcar_path::AbstractString)
     _, x_frac_uc, L_uc = read_poscar_data(ucposcar_path)
+    L_uc *= A_to_bohr
     return read_ifc2(ifc2_path, x_frac_uc, L_uc)
 end
 
@@ -49,7 +50,7 @@ function read_ifc2(
             for i in 1:n_neighbors
                 a2 = readline_skip_text!(io, Int) # unitcell index of neighbor
                 lv2_frac = read_svec3!(io, Float64)
-                ifcs = read_mat3_rows!(io, Float64)
+                ifcs = read_mat3_rows!(io, Float64; conv = forceconstant_2nd_eVA_to_HartreeBohr)
 
                 # frac positions of the two atoms in their image cells
                 v1_frac = r_frac_uc[a1] # + lv1_frac 
@@ -102,8 +103,9 @@ Returns
 - `IFCs{3,T}` with `na_uc`, `r_cut`, and `atoms::Vector{AtomFC3{T,N}}`
 """
 function read_ifc3(ifc3_path::AbstractString, ucposcar_path::AbstractString)
-    _, x_frac, cell = read_poscar_data(ucposcar_path)
-    return read_ifc3(ifc3_path, x_frac, cell)
+    _, x_frac, L_uc = read_poscar_data(ucposcar_path)
+    L_uc *= A_to_bohr
+    return read_ifc3(ifc3_path, x_frac, L_uc)
 end
 
 function read_ifc3(
@@ -143,7 +145,7 @@ function read_ifc3(
                 lv2_frac = read_svec3!(io, Float64)
                 lv3_frac = read_svec3!(io, Float64)
 
-                ifcs = read_tensor3!(io, Float64)  # SArray{Tuple{3,3,3},T}
+                ifcs = read_tensor3!(io, Float64; conv = forceconstant_3rd_eVA_to_HartreeBohr)
 
                 # Fractional positions of the three atoms in their image cells
                 v1_frac = lv1_frac + r_frac_uc[a1]
@@ -207,8 +209,9 @@ Returns
 - `IFCs{4,T}` with `na_uc`, `r_cut`, and `atoms::Vector{AtomFC4{T,N}}`
 """
 function read_ifc4(ifc4_path::AbstractString, ucposcar_path::AbstractString)
-    _, x_frac, cell = read_poscar_data(ucposcar_path)
-    return read_ifc4(ifc4_path, x_frac, cell)
+    _, x_frac, L_uc = read_poscar_data(ucposcar_path)
+    L_uc *= A_to_bohr
+    return read_ifc4(ifc4_path, x_frac, L_uc)
 end
 
 function read_ifc4(path::AbstractString,
@@ -245,7 +248,7 @@ function read_ifc4(path::AbstractString,
                 lv3_frac = read_svec3!(io, Float64)
                 lv4_frac = read_svec3!(io, Float64)
 
-                ifcs = read_tensor4!(io, Float64)  # SArray{Tuple{3,3,3,3},T}
+                ifcs = read_tensor4!(io, Float64; conv = forceconstant_4th_eVA_to_HartreeBohr)
 
                 # fractional positions including image shifts
                 v1_frac = lv1_frac + r_frac_uc[a1]

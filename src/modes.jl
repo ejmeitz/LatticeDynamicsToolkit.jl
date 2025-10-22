@@ -34,11 +34,3 @@ function get_modes(D::Hermitian)
     freqs_sq[idx_rt[1:3]] .= 0.0
     return freqs_sq, eig_stuff.vectors
 end
-
-function to_rad_s(freqs)
-    J_to_eV = 1.602176565e-19
-    ang_to_m = 1e-10
-    amu_to_kg = 1.660539066e-27
-    k = sqrt(J_to_eV / amu_to_kg) / ang_to_m
-    return k .* freqs
-end

@@ -1,4 +1,4 @@
-export energies
+export energies, make_energy_dataset
 
 function energies(
         u::Vector{SVector{3,Float64}},
@@ -79,6 +79,61 @@ function energies(
     return e2, e3, e4
 end
 
+# Generate canonical_configrations and caluclate their energies from the Taylor series.
+# Assumes IFCs are from unitcell if sc is passed
+function make_energy_dataset(
+        cc_settings::ConfigSettings,
+        uc::CrystalStructure,
+        sc::CrystalStructure;
+        ifc2::IFC2, # required, but pass as kwarg
+        ifc3::Union{Nothing, IFC3} = nothing,
+        ifc4::Union{Nothing, IFC4} = nothing
+    )
+
+    valid_ifcs = Iterators.filter(!isnothing, (ifc2, ifc3, ifc4))
+    
+    @info "Remapping IFCs to Supercell"
+    valid_ifcs_remapped = remap(sc, uc, valid_ifcs...)
+    valid_ifcs_remapped_kwargs = build_kwargs(valid_ifcs_remapped...)
+    
+    return _make_energy_dataset(cc_settings, sc; valid_ifcs_remapped_kwargs...)
+end
+
+# Assumes IFCs are supercell already
+function _make_energy_dataset(
+    cc_settings::ConfigSettings,
+    sc::CrystalStructure;
+    ifc2::IFC2,
+    ifc3::Union{Nothing, IFC3} = nothing,
+    ifc4::Union{Nothing, IFC4} = nothing,
+    n_threads::Integer = Threads.nthreads()
+)
+    valid_ifcs = Iterators.filter(!isnothing, (ifc2, ifc3, ifc4))
+
+    remap_checks(sc, valid_ifcs...)
+
+    dynmat = dynmat_gamma(ifc2, sc)
+    freqs_sq, phi = get_modes(dynmat)
+    freqs = sqrt.(freqs_sq)  # Will error for negative frequencies which I am ok with
+
+    tep_energies = zeros(SVector{3, Float64}, cc_settings.n_configs)
+
+    f = (config) -> energies(config, ifc2; fc3=ifc3, fc4=ifc4, n_threads=1)
+
+    @info "Building Energy Dataset"
+    canonical_configs(
+        tep_energies,
+        f,
+        cc_settings,
+        freqs,
+        phi,
+        sc.m;
+        n_threads = n_threads
+    )
+
+    return tep_energies
+
+end
 
 
 # """

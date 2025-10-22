@@ -3,7 +3,7 @@ export remap
 
 function remap(new_sc::CrystalStructure, uc::CrystalStructure, ifcs::IFCs...)
 
-    remap_checks.(Ref(uc), ifcs)
+    remap_checks(uc, ifcs...)
 
     ss_to_uc_map = map_super_to_unitcell(uc, new_sc) 
 
@@ -13,18 +13,18 @@ end
 
 function remap_checks(
         uc::CrystalStructure,
-        ifc::I
-    ) where {I <: IFCs}
+        ifcs::IFCs...
+    )
 
     # Check input
     n_uc = length(uc)
-    n_uc_ifc = ifc.na
+    n_uc_ifc = [ifc.na for ifc in ifcs]
 
     if !allequal(n_uc_ifc)
-        throw(ArgumentError("You passed ifcs_old built from different size unitcells $(n_uc_ifc). You must call remap on each separately."))
+        throw(ArgumentError("You passed ifcs_old built from different size unitcells $(n_uc_ifc)."))
     end
     if !all(n_uc .== n_uc_ifc)
-        throw(ArgumentError("Your force constants are calcualted on a unitcells with $(n_uc_ifc) atoms, but you passed a unitcell with $(n_uc) atoms."))
+        throw(ArgumentError("Your force constants are calcualted on a cell with $(n_uc_ifc) atoms, but you passed a cell with $(n_uc) atoms."))
     end
 end
 

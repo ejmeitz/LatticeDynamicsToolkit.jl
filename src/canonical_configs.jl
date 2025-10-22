@@ -1,17 +1,17 @@
 export canonical_configs, canonical_configs_and_velocities, canonical_velocities, mean_amplitude
 
 function bose_einstein(freq, temp)
-    x =  upreferred((hbar * freq) / (kB * temp))
+    x =  upreferred(freq / (kB_Hartree * temp))
     return 1 / (exp(x) - 1)
 end
 
 function mean_amplitude(qc::QuantumConfigSettings, freq, mass)
     nᵢ = bose_einstein(freq, qc.temperature)
-    return sqrt((hbar * (2*nᵢ + 1)) / (2 * mass * freq))
+    return sqrt((2*nᵢ + 1) / (2 * mass * freq))
 end
 
 function mean_amplitude(cc::ClassicalConfigSettings, freq, mass)
-    return sqrt((kB * cc.temperature)/mass) / freq
+    return sqrt((kB_Hartree * cc.temperature) / mass) / freq
 end
 
 function extend_masses(atom_masses, D)
@@ -181,4 +181,48 @@ function canonical_velocities(CM::ConfigSettings, freqs::AbstractVector,
     finish!(p)
 
     return velos
+end
+
+# in place version that evaluates f on each generated config and stores the result in output
+# avoids allocating all configurations in RAM
+function canonical_configs!(output, f::Function, CM::ConfigSettings, freqs::AbstractVector,
+                         phi::AbstractMatrix, atom_masses::AbstractVector;
+                         n_threads::Int = Threads.nthreads(), D::Int = 3)
+    
+    N_atoms = Int(length(freqs) / D)
+
+    freqs_view, phi_view, atom_masses = prepare(freqs, phi, D, atom_masses)
+
+    phi_view_T = transpose(phi_view)
+    atom_masses_T = transpose(atom_masses)
+    mean_amplitude_matrix = mean_amplitude.(Ref(CM), freqs_view, atom_masses_T) # D*N_atoms - D x D*N_atoms
+
+    # Pre-scale modes by their amplitudes
+    phi_A = phi_view_T .* mean_amplitude_matrix # D*N_atoms x D*N_atoms - D
+
+    p = Progress(CM.n_configs; desc="Generating Disps", dt = 0.1, color = :magenta)
+    @tasks for n in 1:CM.n_configs
+        @set begin
+            ntasks = n_threads
+            scheduler = :static
+        end
+        @local begin
+            tmp = zeros(size(phi_A))
+            coord_storage = zeros(D*N_atoms)
+            randn_storage = zeros(D*N_atoms - D)
+        end
+
+        randn!(randn_storage)
+        copy!(tmp, phi_A)
+
+        tmp .*= randn_storage
+
+        coord_storage .= vec(sum(tmp, dims=1))
+        output[n] = f(coord_storage)
+
+        next!(p)
+    end
+    finish!(p)
+
+    return output
 end

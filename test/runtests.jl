@@ -42,8 +42,6 @@ end
     
     ucposcar_path = joinpath(data_dir, "infile.ucposcar")
     ssposcar_path = joinpath(data_dir, "100K_5UC_remapped", "infile.ssposcar")
-    ssposcar_path_3UC = joinpath(data_dir, "100K_3UC", "infile.ssposcar")
-
 
     ifc2, ifc3, ifc4 = load_sw_ifcs(ucposcar_path)
 
@@ -63,5 +61,31 @@ end
 
     println(TDEPToolkit.energies_faithful(u, tdep_ifc2_remapped; fc3 = ifc3_remapped_path))
 
+end
+
+
+@testset "Energy Dataset" begin
+    
+    data_dir = raw"C:\Users\ejmei\repos\TDEP_IFCs.jl\data"
+    ucposcar_path = joinpath(data_dir, "infile.ucposcar")
+    ssposcar_path = joinpath(data_dir, "100K_3UC", "infile.ssposcar")
+
+    ifc2, ifc3, ifc4 = load_sw_ifcs(ucposcar_path)
+
+    uc = CrystalStructure(ucposcar_path)
+    sc = CrystalStructure(ssposcar_path)
+
+    n_configs = 10
+    temperature = 100.0
+    settings = ClassicalConfigSettings(n_configs, temperature)
+
+    energies = TDEPToolkit.make_energy_dataset(
+        settings,
+        uc,
+        sc;
+        ifc2 = ifc2,
+        ifc3 = ifc3,
+        ifc4 = ifc4
+    )
 
 end

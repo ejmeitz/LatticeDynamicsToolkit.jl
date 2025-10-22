@@ -16,36 +16,36 @@ readline_skip_text!(io, T) = parse(T, first(split(strip(readline(io)))))
 chop3(v::SVector{3,T}, chop_tol::T) where T = SVector{3,T}(ntuple(i -> (abs(v[i]) < chop_tol ? zero(T) : v[i]), 3))
 
 
-@inline function read_svec3!(io, ::Type{T}) where T
+@inline function read_svec3!(io, ::Type{T}; conv = T(1.0)) where T
     xs = split(strip(readline(io)))
-    return SVector{3,T}(parse.(T, xs))
+    return SVector{3,T}(conv .* parse.(T, xs))
 end
 
-@inline  function read_vec3!(io, out::AbstractVector{T}) where T
-    out .= parse.(T, split(strip(readline(io))))
+@inline  function read_vec3!(io, out::AbstractVector{T}; conv = T(1.0)) where T
+    out .= conv .* parse.(T, split(strip(readline(io))))
     return out
 end
 
-@inline function read_mat3_rows!(io, ::Type{T}) where T
-    r1 = read_svec3!(io, T)
-    r2 = read_svec3!(io, T)
-    r3 = read_svec3!(io, T)
+@inline function read_mat3_rows!(io, ::Type{T}; conv = T(1.0)) where T
+    r1 = read_svec3!(io, T; conv = conv)
+    r2 = read_svec3!(io, T; conv = conv)
+    r3 = read_svec3!(io, T; conv = conv)
     M = hcat(r1, r2, r3)'   # r1 is first row, etc.
     return SMatrix{3, 3, T, 9}(M)     
 end
 
-@inline  function read_tensor3!(io, ::Type{T}) where T
+@inline  function read_tensor3!(io, ::Type{T}; conv = T(1.0)) where T
     M = @MArray zeros(T, 3, 3, 3)
     for ii in 1:3, jj in 1:3
-        @views read_vec3!(io, M[ii, jj, :])
+        @views read_vec3!(io, M[ii, jj, :]; conv = conv)
     end
     return SArray{Tuple{3,3,3}, T, 3, 27}(M)
 end
 
-@inline  function read_tensor4!(io, ::Type{T}) where T
+@inline  function read_tensor4!(io, ::Type{T}; conv = T(1.0)) where T
     M = @MArray zeros(T, 3, 3, 3, 3)
     for ii in 1:3, jj in 1:3, kk in 1:3
-        @views read_vec3!(io, M[ii, jj, kk, :])
+        @views read_vec3!(io, M[ii, jj, kk, :]; conv = conv)
     end
     return SArray{Tuple{3,3,3,3}, T, 4, 81}(M)
 end
@@ -91,22 +91,14 @@ function read_poscar_cell(path::String)
 
 end
 
-function read_poscar_positions(
-        path;
-        ssposcar_is_frac::Bool = true,
-        store_frac_coords::Bool = false
-    )
+function read_poscar_positions(path::String)
 
     cell, n_atoms = read_poscar_cell(path)
 
-    positions = zeros(SVector{3, Float64}, n_atoms)
+    x_frac = zeros(SVector{3, Float64}, n_atoms)
 
-    convert_to_cart = (!store_frac_coords && ssposcar_is_frac)
-
-    K = (convert_to_cart ? cell : Matrix{Float64}(I, 3, 3))
-    parse_line = (line) -> SVector(K * parse.(Float64, split(strip(line))[1:3])...)
-
-
+    # K = (convert_to_cart ? cell : Matrix{Float64}(I, 3, 3))
+    parse_line = (line) -> SVector(parse.(Float64, split(strip(line))[1:3])...)
 
     open(path, "r") do f
         readline(f)
@@ -116,33 +108,27 @@ function read_poscar_positions(
         readline(f)
         readline(f) # skip species line
         readline(f) # natoms line
-        readline(f) # skip "direct coordinates" line
+        coord_type = strip(readline(f)) # "direct coordinates" line
+        
+        if startswith(coord_type, 'C') || startswith(coord_type, "c")
+            error("Cartesian POSCAR are not supported, please convert $(path) to fractional.")
+        end
 
         for i in 1:n_atoms
-            positions[i] = parse_line(readline(f))
+            x_frac[i] = parse_line(readline(f))
         end
     end
 
-    return positions, cell
+    return x_frac, cell
 
 end
 
-function read_poscar_data(
-        path;
-        ssposcar_is_frac::Bool = true,
-        store_frac_coords::Bool = true
-    )
+function read_poscar_data(path::String)
 
     symbols, counts = read_poscar_symbol_block(path)
     species = reduce(vcat, [fill(s, c) for (s,c) in zip(symbols, counts)])
-
-    positions, cell = read_poscar_positions(
-                            path;
-                            ssposcar_is_frac = ssposcar_is_frac,
-                            store_frac_coords = store_frac_coords
-                        )
+    positions, cell = read_poscar_positions(path)
     
-
     return species, positions, cell
 
 end

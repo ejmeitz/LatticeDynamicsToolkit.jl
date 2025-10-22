@@ -1,4 +1,4 @@
-export IFC2, IFC3, IFC4, CrystalStructure
+export IFC2, IFC3, IFC4, CrystalStructure, ClassicalConfigSettings, QuantumConfigSettings
 
 abstract type IFCs end
 
@@ -58,15 +58,20 @@ end
 
 get_interactions(data::I, i::Int) where {I <: IFCs} = data.atoms[i]
 
+get_kwarg(::IFC2) = :ifc2
+get_kwarg(::IFC3) = :ifc3
+get_kwarg(::IFC4) = :ifc4
+
+build_kwargs(ifcs::IFCs...) = NamedTuple{get_kwarg.(ifcs)}(ifcs)
 
 Base.show(io::IO, ifc::IFC2) =
-    print(io, "2nd Order IFCs, cutoff = $(round(ifc.r_cut, digits = 5)) Ang from $(ifc.na) atom unit-cell")
+    print(io, "2nd Order IFCs, cutoff = $(round(ifc.r_cut*bohr_to_A, digits = 5)) Ang from $(ifc.na) atom unit-cell")
 
 Base.show(io::IO, ifc::IFC3) =
-    print(io, "3rd Order IFCs, cutoff = $(round(ifc.r_cut, digits = 5)) Ang from $(ifc.na) atom unit-cell")
+    print(io, "3rd Order IFCs, cutoff = $(round(ifc.r_cut*bohr_to_A, digits = 5)) Ang from $(ifc.na) atom unit-cell")
 
 Base.show(io::IO, ifc::IFC4) =
-    print(io, "4th Order IFCs, cutoff = $(round(ifc.r_cut, digits = 5)) Ang from $(ifc.na) atom unit-cell")
+    print(io, "4th Order IFCs, cutoff = $(round(ifc.r_cut*bohr_to_A, digits = 5)) Ang from $(ifc.na) atom unit-cell")
 
 #######################
 
@@ -93,12 +98,12 @@ end
 
 struct CrystalStructure
     x_frac::Vector{SVector{3,Float64}}
-    x_cart::Vector{SVector{3,Float64}}
+    x_cart::Vector{SVector{3,Float64}} # bohr
     species::Vector{Symbol}
-    m::Vector{Float64} # in amu
+    m::Vector{Float64} # in emu
     invsqrtm::Vector{Float64} # 1/sqrt(m)
-    L::SMatrix{3,3,Float64}
-    L_inv::SMatrix{3,3,Float64}
+    L::SMatrix{3,3,Float64,9} # bohr
+    L_inv::SMatrix{3,3,Float64,9} 
 end
 
 Base.length(cs::CrystalStructure) = length(cs.x_frac)
@@ -107,19 +112,16 @@ Base.length(cs::CrystalStructure) = length(cs.x_frac)
 
 Parameters:
 -----------
-- `poscar_path::String` : Path to file to parse
-- `poscar_is_frac::Bool = true` : Whether or not the coordinates in the file are fractional.
+- `poscar_path::String` : Path to POSCAR file to parse, only fractional coords supported
 """
-function CrystalStructure(
-        poscar_path::String,
-        poscar_is_frac::Bool = true,
-    ) 
+function CrystalStructure(poscar_path::String) 
 
-    species, x_frac, cell = read_poscar_data(
-        poscar_path;
-        ssposcar_is_frac = poscar_is_frac,
-        store_frac_coords = true, 
-    )
+    species, x_frac, cell = read_poscar_data(poscar_path)
+
+    # convert lattice vectors to bohr
+    # will make all coordinates in bohr as well
+    cell *= A_to_bohr
+    cell_inv = inv(cell)
 
     ls = length(species); lc = length(x_frac)
     if length(species) != length(x_frac)
@@ -128,12 +130,10 @@ function CrystalStructure(
 
     x_cart = to_cart_coords.(Ref(cell), x_frac)
 
-    cell_inv = inv(cell)
-    m = ustrip.([periodic_table[s].atomic_mass for s in species])
+    m = ustrip.([periodic_table[s].atomic_mass for s in species]) .* amu_to_emu 
     invsqrtm = sqrt.(m)
 
     return CrystalStructure(x_frac, x_cart, species, m, invsqrtm, cell, cell_inv)
-
 end
 
 
