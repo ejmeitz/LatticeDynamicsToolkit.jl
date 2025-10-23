@@ -1,5 +1,7 @@
 module TDEPToolkit
 
+using AtomsBase
+using AtomsCalculators
 using LinearAlgebra
 using StaticArrays
 using CellListMap

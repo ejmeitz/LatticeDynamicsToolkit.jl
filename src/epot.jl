@@ -161,7 +161,7 @@ function make_energy_dataset(
 end
 
 # Assumes IFCs are supercell already
-function _make_energy_dataset_no_V(
+function _make_energy_dataset(
     cc_settings::ConfigSettings,
     sc::CrystalStructure;
     ifc2::IFC2,
@@ -196,42 +196,42 @@ function _make_energy_dataset_no_V(
 
 end
 
-# Assumes IFCs are supercell already
-# function _make_energy_dataset_no_V(
-#     cc_settings::ConfigSettings,
-#     sc::CrystalStructure,
-#     calc;
-#     ifc2::IFC2,
-#     ifc3::Union{Nothing, IFC3} = nothing,
-#     ifc4::Union{Nothing, IFC4} = nothing,
-#     n_threads::Integer = Threads.nthreads()
-# )
-#     valid_ifcs = Iterators.filter(!isnothing, (ifc2, ifc3, ifc4))
+#Assumes IFCs are supercell already
+# Comptue true energy given `calc` via AtomsCalculators
+function _make_energy_dataset(
+    cc_settings::ConfigSettings,
+    sc::CrystalStructure,
+    calc;
+    ifc2::IFC2,
+    ifc3::Union{Nothing, IFC3} = nothing,
+    ifc4::Union{Nothing, IFC4} = nothing,
+    n_threads::Integer = Threads.nthreads()
+)
+    valid_ifcs = Iterators.filter(!isnothing, (ifc2, ifc3, ifc4))
 
-#     remap_checks(sc, valid_ifcs...)
+    remap_checks(sc, valid_ifcs...)
 
-#     dynmat = dynmat_gamma(ifc2, sc)
-#     freqs_sq, phi = get_modes(dynmat)
-#     freqs = sqrt.(freqs_sq)  # Will error for negative frequencies which I am ok with
+    dynmat = dynmat_gamma(ifc2, sc)
+    freqs_sq, phi = get_modes(dynmat)
+    freqs = sqrt.(freqs_sq)  # Will error for negative frequencies which I am ok with
 
-#     tep_energies = zeros(SVector{3, Float64}, cc_settings.n_configs)
+    tep_energies = zeros(SVector{3, Float64}, cc_settings.n_configs)
 
-#     # function f(config) 
-#     #     tep_energies = energies(config, ifc2; fc3=ifc3, fc4=ifc4, n_threads=1)
-#     #     V = potential_energy(config, sc, pot, nl)
-#     # end
+    f = (config) -> energies(config, ifc2; fc3=ifc3, fc4=ifc4, n_threads=1)
 
-#     @info "Building Energy Dataset"
-#     canonical_configs!(
-#         tep_energies,
-#         f,
-#         cc_settings,
-#         freqs,
-#         phi,
-#         sc.m;
-#         n_threads = n_threads
-#     )
+    @info "Building Energy Dataset"
+    tep_energies, V = canonical_configs_V!(
+        tep_energies,
+        f,
+        sc,
+        calc,
+        cc_settings,
+        freqs,
+        phi,
+        sc.m;
+        n_threads = n_threads
+    )
 
-#     return Hartree_to_eV .* tep_energies
+    return Hartree_to_eV .* tep_energies, V .* Hartree_to_eV
 
-# end
+end

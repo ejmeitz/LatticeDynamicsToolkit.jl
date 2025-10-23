@@ -225,3 +225,64 @@ function canonical_configs!(output, f::Function, CM::ConfigSettings, freqs::Abst
 
     return output
 end
+
+# Uses AtomsCalculators to calculate True energies
+function canonical_configs_V!(
+        output, 
+        f::Function, 
+        sc::CrystalStructure, 
+        calc,
+        CM::ConfigSettings, 
+        freqs::AbstractVector,
+        phi::AbstractMatrix, 
+        atom_masses::AbstractVector;
+        n_threads::Int = Threads.nthreads(),
+        D::Int = 3
+    )
+    
+    N_atoms = Int(length(freqs) / D)
+
+    freqs_view, phi_view, atom_masses = prepare(freqs, phi, D, atom_masses)
+
+    phi_view_T = transpose(phi_view)
+    atom_masses_T = transpose(atom_masses)
+    mean_amplitude_matrix = mean_amplitude.(Ref(CM), freqs_view, atom_masses_T) # D*N_atoms - D x D*N_atoms
+
+    # Pre-scale modes by their amplitudes
+    phi_A = phi_view_T .* mean_amplitude_matrix # D*N_atoms x D*N_atoms - D
+
+    V = zeros(Float64, CM.n_configs)
+
+    p = Progress(CM.n_configs; desc="Generating Disps", dt = 0.25, color = :magenta)
+    @tasks for n in 1:CM.n_configs
+        @set begin
+            ntasks = n_threads
+            scheduler = :static
+        end
+        @local begin
+            tmp = zeros(size(phi_A))
+            coord_storage = zeros(D*N_atoms)
+            randn_storage = zeros(D*N_atoms - D)
+            sys = deepcopy(sc)
+        end
+
+        randn!(randn_storage)
+        copy!(tmp, phi_A)
+
+        tmp .*= randn_storage
+
+        # Evalulate user function
+        coord_storage .= vec(sum(tmp, dims=1))
+        cs = reinterpret(SVector{D, Float64}, coord_storage)
+        output[n] = f(cs)
+
+        # Calculate energy with provided calculator
+        sys.x_cart .= cs
+        V[n] = ustrip(AtomsCalculators.potential_energy(sys, calc))
+
+        next!(p)
+    end
+    finish!(p)
+
+    return output, V
+end
