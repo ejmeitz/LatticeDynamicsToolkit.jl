@@ -96,6 +96,7 @@ end
 
 ##############################
 
+# Could make this an AtomsBase compatible type
 struct CrystalStructure
     x_frac::Vector{SVector{3,Float64}}
     x_cart::Vector{SVector{3,Float64}} # bohr

@@ -79,9 +79,10 @@ end
     temperature = 1300.0
     settings = ClassicalConfigSettings(n_configs, temperature)
 
-    dynmat = TDEPToolkit.dynmat_gamma(ifc2_remapped, sc)
-    freqs_sq, phi = TDEPToolkit.get_modes(dynmat)
-    freqs_Thz = sqrt.(freqs_sq) .* TDEPToolkit.frequency_Hartree_to_THz
+    # ifc2_remapped = remap(sc, uc, ifc2)[1]
+    # dynmat = TDEPToolkit.dynmat_gamma(ifc2_remapped, sc)
+    # freqs_sq, phi = TDEPToolkit.get_modes(dynmat)
+    # freqs_Thz = sqrt.(freqs_sq) .* TDEPToolkit.frequency_Hartree_to_THz
 
     tep_energies = TDEPToolkit.make_energy_dataset(
         settings,
