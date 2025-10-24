@@ -101,23 +101,24 @@ end
     uc = CrystalStructure(ucposcar_path)
     sc = CrystalStructure(ssposcar_path)
 
-    n_configs = 10_000
+    n_configs = 10
     temperature = 1300.0
     settings = ClassicalConfigSettings(n_configs, temperature)
 
     sw_pot = joinpath(data_dir, "Si.sw")
     pot_cmds = ["pair_style sw", "pair_coeff * * \"$(sw_pot)\" Si"]
 
-    calc = LAMMPSCalculator(s, pot_cmds)
+    make_calc = (sc) -> LAMMPSCalculator(sc, pot_cmds)
 
-    tep_energies = make_energy_dataset(
+    tep_energies, V = make_energy_dataset(
         settings,
         uc,
         sc,
-        calc;
+        make_calc;
         ifc2 = ifc2,
         ifc3 = ifc3,
-        ifc4 = ifc4
+        ifc4 = ifc4,
+        n_threads = 1
     )
 
 end

@@ -1,4 +1,4 @@
-module LatticeDyanmicsToolkit
+module LatticeDynamicsToolkit
 
 using AtomsBase
 using AtomsCalculators

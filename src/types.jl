@@ -1,6 +1,6 @@
 export 
     IFC2, IFC3, IFC4,
-    CrystalStructure,
+    CrystalStructure, ConfigSettings,
     ClassicalConfigSettings, QuantumConfigSettings,
     LAMMPSCalculator
 

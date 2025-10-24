@@ -1,4 +1,4 @@
-name = "LatticeDyanmicsToolkit"
+name = "LatticeDynamicsToolkit"
 uuid = "b29279a7-2984-401e-b335-37c7be833a5d"
 authors = ["Ethan Meitz <emeitz@andrew.cmu.edu>"]
 version = "0.0.1"

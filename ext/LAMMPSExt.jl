@@ -2,10 +2,16 @@ module LAMMPSExt
 
 using LAMMPS
 using LatticeDynamicsToolkit
+import LatticeDynamicsToolkit: bohr_to_A, A_to_bohr, Hartree_to_eV, emu_to_amu, lo_tol
 using AtomsBase
 using AtomsCalculators
 using LinearAlgebra
 using Unitful
+using OhMyThreads
+using ProgressMeter
+using CellListMap
+using StaticArrays
+import Random: randn!
 
 function LatticeDynamicsToolkit.LAMMPSCalculator(
         sys::CrystalStructure,
@@ -53,7 +59,7 @@ function LatticeDynamicsToolkit.LAMMPSCalculator(
         types = [Int32(label_type_map[sym]) for sym in all_syms]
     end
 
-    m_lmp = Dict(label_type_map[sym] => ustrip(sys.mass[i]) for (sym, i) in unique_sym_idxs)
+    m_lmp = Dict(label_type_map[sym] => emu_to_amu * sys.m[i] for (sym, i) in unique_sym_idxs)
 
     label_map_cmd = "labelmap atom " * join(["$(i) $(sym)" for (sym,i) in label_type_map], " ") 
 
@@ -61,7 +67,7 @@ function LatticeDynamicsToolkit.LAMMPSCalculator(
     # in crystals atoms should never move more than this distance
     # so we the initial neighbor list will always be valid.
     r_cut = (min(xhi, yhi, zhi) / 2.0) - lo_tol # biggest possible cutoff given cell
-    nl = CellListMap.neighborlist(sc.x_cart, r_cut * A_to_bohr; unitcell = sc.L)
+    nl = CellListMap.neighborlist(sys.x_cart, r_cut * A_to_bohr; unitcell = sys.L)
     skin_distance = bohr_to_A * minimum(x -> last(x), nl)
 
     setup_cmd = """
@@ -79,7 +85,6 @@ function LatticeDynamicsToolkit.LAMMPSCalculator(
             $(label_map_cmd)
         """
 
-    m_lmp .*= LatticeDynamicsToolkit.emu_to_amu
     mass_cmd = join(["mass $(type) $(m)" for (type,m) in  m_lmp], "\n")
 
     command(lmp, setup_cmd)
@@ -89,7 +94,7 @@ function LatticeDynamicsToolkit.LAMMPSCalculator(
 
     LAMMPS.create_atoms(
         lmp,
-        reinterpret(reshape, Float64, sys.position),
+        reinterpret(reshape, Float64, sys.x_cart .* bohr_to_A),
         ids,
         types
     )   
@@ -109,7 +114,7 @@ function LatticeDynamicsToolkit.LAMMPSCalculator(
     # and build the neighbor list. 
     command(lmp, "run 0 post no")
 
-    return TDEP.LAMMPSCalculator{typeof(lmp)}(lmp, -1)
+    return LatticeDynamicsToolkit.LAMMPSCalculator{typeof(lmp)}(lmp, -1)
 end
 
 AtomsCalculators.energy_unit(inter::LAMMPSCalculator) = NoUnits
@@ -117,14 +122,14 @@ AtomsCalculators.energy_unit(inter::LAMMPSCalculator) = NoUnits
 # Assumes sys.r_cart already in right units 
 function AtomsCalculators.potential_energy(sys::CrystalStructure, inter::LAMMPSCalculator; kwargs...)
     scatter!(inter.lmp, "x", reinterpret(reshape, Float64, sys.r_cart))
-    command(inter.lmp, "run 0 pre no post no")
+    command(inter.lmp, "run 0 post no")
     return extract_compute(inter.lmp, "pot_e", STYLE_GLOBAL, TYPE_SCALAR)[1]
 end
 
 # Expect Vector of Vectors or 3 x N Matrix
 function single_point_potential_energy(r::AbstractVecOrMat, inter::LAMMPSCalculator)
     scatter!(inter.lmp, "x", reinterpret(reshape, Float64, r))
-    command(inter.lmp, "run 0 pre no post no")
+    command(inter.lmp, "run 0 post no")
     return extract_compute(inter.lmp, "pot_e", STYLE_GLOBAL, TYPE_SCALAR)[1]
 end
 
@@ -133,7 +138,7 @@ function LatticeDynamicsToolkit.make_energy_dataset(
         cc_settings::ConfigSettings,
         uc::CrystalStructure,
         sc::CrystalStructure,
-        calc::LAMMPSCalculator;
+        make_calc::Function;
         ifc2::IFC2, # required, but pass as kwarg
         ifc3::Union{Nothing, IFC3} = nothing,
         ifc4::Union{Nothing, IFC4} = nothing,
@@ -144,9 +149,9 @@ function LatticeDynamicsToolkit.make_energy_dataset(
     
     @info "Remapping IFCs to Supercell"
     valid_ifcs_remapped = remap(sc, uc, valid_ifcs...)
-    valid_ifcs_remapped_kwargs = build_kwargs(valid_ifcs_remapped...)
+    valid_ifcs_remapped_kwargs = LatticeDynamicsToolkit.build_kwargs(valid_ifcs_remapped...)
     
-    return _make_energy_dataset(cc_settings, sc, calc; valid_ifcs_remapped_kwargs..., n_threads = n_threads)
+    return _make_energy_dataset(cc_settings, sc, make_calc; valid_ifcs_remapped_kwargs..., n_threads = n_threads)
 end
 
 #Assumes IFCs are supercell already
@@ -154,7 +159,7 @@ end
 function _make_energy_dataset(
     cc_settings::ConfigSettings,
     sc::CrystalStructure,
-    calc::LAMMPSCalculator;
+    make_calc::Function;
     ifc2::IFC2,
     ifc3::Union{Nothing, IFC3} = nothing,
     ifc4::Union{Nothing, IFC4} = nothing,
@@ -162,7 +167,7 @@ function _make_energy_dataset(
 )
     valid_ifcs = Iterators.filter(!isnothing, (ifc2, ifc3, ifc4))
 
-    remap_checks(sc, valid_ifcs...)
+    LatticeDynamicsToolkit.remap_checks(sc, valid_ifcs...)
 
     dynmat = dynmat_gamma(ifc2, sc)
     freqs_sq, phi = get_modes(dynmat)
@@ -177,7 +182,7 @@ function _make_energy_dataset(
         tep_energies,
         f,
         sc,
-        calc,
+        make_calc,
         cc_settings,
         freqs,
         phi,
@@ -185,7 +190,7 @@ function _make_energy_dataset(
         n_threads = n_threads
     )
 
-    return Hartree_to_eV .* tep_energies, V .* Hartree_to_eV
+    return Hartree_to_eV .* tep_energies, V
 
 end
 
@@ -194,7 +199,7 @@ function canonical_configs_V!(
         output, 
         f::Function, 
         sc::CrystalStructure, 
-        calc::LAMMPSCalculator,
+        make_calc::Function,
         CM::ConfigSettings, 
         freqs::AbstractVector,
         phi::AbstractMatrix, 
@@ -205,7 +210,7 @@ function canonical_configs_V!(
     
     N_atoms = Int(length(freqs) / D)
 
-    freqs_view, phi_view, atom_masses = prepare(freqs, phi, D, atom_masses)
+    freqs_view, phi_view, atom_masses = LatticeDynamicsToolkit.prepare(freqs, phi, D, atom_masses)
 
     phi_view_T = transpose(phi_view)
     atom_masses_T = transpose(atom_masses)
@@ -229,7 +234,7 @@ function canonical_configs_V!(
             tmp = zeros(size(phi_A))
             coord_storage = zeros(D*N_atoms)
             randn_storage = zeros(D*N_atoms - D)
-            sys = deepcopy(sc)
+            calc = make_calc(sc)
         end
 
         randn!(randn_storage)

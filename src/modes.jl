@@ -1,3 +1,5 @@
+export dynmat_gamma, get_modes
+
 function dynmat_gamma(fc_sc::IFC2, sc::CrystalStructure)
 
     na = length(sc)
