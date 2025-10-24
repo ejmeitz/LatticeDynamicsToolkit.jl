@@ -79,11 +79,6 @@ end
     temperature = 1300.0
     settings = ClassicalConfigSettings(n_configs, temperature)
 
-    # ifc2_remapped = remap(sc, uc, ifc2)[1]
-    # dynmat = TDEPToolkit.dynmat_gamma(ifc2_remapped, sc)
-    # freqs_sq, phi = TDEPToolkit.get_modes(dynmat)
-    # freqs_Thz = sqrt.(freqs_sq) .* TDEPToolkit.frequency_Hartree_to_THz
-
     tep_energies = TDEPToolkit.make_energy_dataset(
         settings,
         uc,
@@ -94,3 +89,42 @@ end
     )
 
 end
+
+@testset "Energy Calculator" begin
+    
+    data_dir = raw"C:\Users\ejmei\repos\TDEP_IFCs.jl\data"
+    ucposcar_path = joinpath(data_dir, "infile.ucposcar")
+    ssposcar_path = joinpath(data_dir, "100K_3UC", "infile.ssposcar")
+
+    ifc2, ifc3, ifc4 = load_sw_ifcs(ucposcar_path)
+
+    uc = CrystalStructure(ucposcar_path)
+    sc = CrystalStructure(ssposcar_path)
+
+    n_configs = 10_000
+    temperature = 1300.0
+    settings = ClassicalConfigSettings(n_configs, temperature)
+
+    sw_pot = joinpath(data_dir, "Si.sw")
+    pot_cmds = ["pair_style sw", "pair_coeff * * \"$(sw_pot)\" Si"]
+
+    calc = LAMMPSCalculator(s, pot_cmds)
+
+    tep_energies = make_energy_dataset(
+        settings,
+        uc,
+        sc,
+        calc;
+        ifc2 = ifc2,
+        ifc3 = ifc3,
+        ifc4 = ifc4
+    )
+
+end
+
+
+
+    # ifc2_remapped = remap(sc, uc, ifc2)[1]
+    # dynmat = TDEPToolkit.dynmat_gamma(ifc2_remapped, sc)
+    # freqs_sq, phi = TDEPToolkit.get_modes(dynmat)
+    # freqs_Thz = sqrt.(freqs_sq) .* TDEPToolkit.frequency_Hartree_to_THz

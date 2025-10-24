@@ -1,4 +1,4 @@
-module TDEPToolkit
+module LatticeDyanmicsToolkit
 
 using AtomsBase
 using AtomsCalculators

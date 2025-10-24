@@ -1,4 +1,4 @@
-name = "TDEPToolkit"
+name = "LatticeDyanmicsToolkit"
 uuid = "b29279a7-2984-401e-b335-37c7be833a5d"
 authors = ["Ethan Meitz <emeitz@andrew.cmu.edu>"]
 version = "0.0.1"
@@ -15,6 +15,14 @@ Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
+[weakdeps]
+LAMMPS = "ee2e13b9-eee9-4449-aafa-cfa6a2dbe14d"
+
+[extensions]
+LAMMPSExt = "LAMMPS"
+
 [compat]
 AtomsBase = "0.5.2"
 AtomsCalculators = "0.2.3"
+LAMMPS = "0.9"
+

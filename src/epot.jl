@@ -140,26 +140,6 @@ function make_energy_dataset(
     return _make_energy_dataset_no_V(cc_settings, sc; valid_ifcs_remapped_kwargs..., n_threads = n_threads)
 end
 
-function make_energy_dataset(
-        cc_settings::ConfigSettings,
-        uc::CrystalStructure,
-        sc::CrystalStructure,
-        calc;
-        ifc2::IFC2, # required, but pass as kwarg
-        ifc3::Union{Nothing, IFC3} = nothing,
-        ifc4::Union{Nothing, IFC4} = nothing,
-        n_threads::Integer = Threads.nthreads()
-    )
-
-    valid_ifcs = Iterators.filter(!isnothing, (ifc2, ifc3, ifc4))
-    
-    @info "Remapping IFCs to Supercell"
-    valid_ifcs_remapped = remap(sc, uc, valid_ifcs...)
-    valid_ifcs_remapped_kwargs = build_kwargs(valid_ifcs_remapped...)
-    
-    return _make_energy_dataset(cc_settings, sc, calc; valid_ifcs_remapped_kwargs..., n_threads = n_threads)
-end
-
 # Assumes IFCs are supercell already
 function _make_energy_dataset(
     cc_settings::ConfigSettings,
@@ -196,42 +176,3 @@ function _make_energy_dataset(
 
 end
 
-#Assumes IFCs are supercell already
-# Comptue true energy given `calc` via AtomsCalculators
-function _make_energy_dataset(
-    cc_settings::ConfigSettings,
-    sc::CrystalStructure,
-    calc;
-    ifc2::IFC2,
-    ifc3::Union{Nothing, IFC3} = nothing,
-    ifc4::Union{Nothing, IFC4} = nothing,
-    n_threads::Integer = Threads.nthreads()
-)
-    valid_ifcs = Iterators.filter(!isnothing, (ifc2, ifc3, ifc4))
-
-    remap_checks(sc, valid_ifcs...)
-
-    dynmat = dynmat_gamma(ifc2, sc)
-    freqs_sq, phi = get_modes(dynmat)
-    freqs = sqrt.(freqs_sq)  # Will error for negative frequencies which I am ok with
-
-    tep_energies = zeros(SVector{3, Float64}, cc_settings.n_configs)
-
-    f = (config) -> energies(config, ifc2; fc3=ifc3, fc4=ifc4, n_threads=1)
-
-    @info "Building Energy Dataset"
-    tep_energies, V = canonical_configs_V!(
-        tep_energies,
-        f,
-        sc,
-        calc,
-        cc_settings,
-        freqs,
-        phi,
-        sc.m;
-        n_threads = n_threads
-    )
-
-    return Hartree_to_eV .* tep_energies, V .* Hartree_to_eV
-
-end
