@@ -1,13 +1,13 @@
 module LAMMPSExt
 
 using LAMMPS
-using TDEPToolkit
+using LatticeDynamicsToolkit
 using AtomsBase
 using AtomsCalculators
 using LinearAlgebra
 using Unitful
 
-function TDEPToolkit.LAMMPSCalculator(
+function LatticeDynamicsToolkit.LAMMPSCalculator(
         sys::CrystalStructure,
         potential_definition::Union{String, Array{String}};
         label_type_map::Dict{Symbol, Int} = Dict{Symbol, Int}(),
@@ -79,7 +79,7 @@ function TDEPToolkit.LAMMPSCalculator(
             $(label_map_cmd)
         """
 
-    m_lmp .*= TDEPToolkit.emu_to_amu
+    m_lmp .*= LatticeDynamicsToolkit.emu_to_amu
     mass_cmd = join(["mass $(type) $(m)" for (type,m) in  m_lmp], "\n")
 
     command(lmp, setup_cmd)
@@ -129,7 +129,7 @@ function single_point_potential_energy(r::AbstractVecOrMat, inter::LAMMPSCalcula
 end
 
 
-function TDEPToolkit.make_energy_dataset(
+function LatticeDynamicsToolkit.make_energy_dataset(
         cc_settings::ConfigSettings,
         uc::CrystalStructure,
         sc::CrystalStructure,
