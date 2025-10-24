@@ -110,6 +110,11 @@ function LatticeDynamicsToolkit.LAMMPSCalculator(
 
     command(lmp, "compute pot_e all pe")
 
+    command(lmp, "fix hold all nve")
+    command(lmp, "fix freeze all setforce 0.0 0.0 0.0")
+    command(lmp, "velocity all set 0 0 0")
+    command(lmp, "timestep 1.0")
+
     # This allows LAMMPS to register the computes/fixes
     # and build the neighbor list. 
     command(lmp, "run 0 post no")
@@ -122,18 +127,19 @@ AtomsCalculators.energy_unit(inter::LAMMPSCalculator) = NoUnits
 # Assumes sys.r_cart already in right units 
 function AtomsCalculators.potential_energy(sys::CrystalStructure, inter::LAMMPSCalculator; kwargs...)
     scatter!(inter.lmp, "x", reinterpret(reshape, Float64, sys.r_cart))
-    command(inter.lmp, "run 0 post no")
+    command(inter.lmp, "run 1 pre no post yes")
     return extract_compute(inter.lmp, "pot_e", STYLE_GLOBAL, TYPE_SCALAR)[1]
 end
 
 # Expect Vector of Vectors or 3 x N Matrix
 function single_point_potential_energy(r::AbstractVecOrMat, inter::LAMMPSCalculator)
     scatter!(inter.lmp, "x", reinterpret(reshape, Float64, r))
-    command(inter.lmp, "run 0 post no")
+    command(inter.lmp, "run 1 pre no post yes")
     return extract_compute(inter.lmp, "pot_e", STYLE_GLOBAL, TYPE_SCALAR)[1]
 end
 
-
+# make_calc is a function that takes in `sc` and
+# returns a LAMMPSCalculator for that structure
 function LatticeDynamicsToolkit.make_energy_dataset(
         cc_settings::ConfigSettings,
         uc::CrystalStructure,
@@ -178,7 +184,7 @@ function _make_energy_dataset(
     f = (config) -> energies(config, ifc2; fc3=ifc3, fc4=ifc4, n_threads=1)
 
     @info "Building Energy Dataset"
-    tep_energies, V = canonical_configs_V!(
+    tep_energies, V = _canonical_configs_V!(
         tep_energies,
         f,
         sc,
@@ -195,7 +201,7 @@ function _make_energy_dataset(
 end
 
 # Uses AtomsCalculators to calculate True energies
-function canonical_configs_V!(
+function _canonical_configs_V!(
         output, 
         f::Function, 
         sc::CrystalStructure, 
@@ -224,7 +230,7 @@ function canonical_configs_V!(
     # LAMMPSCalculator only supports metal units
     x_cart_eq_ang = copy(sc.x_cart) .* bohr_to_A
 
-    p = Progress(CM.n_configs; desc="Generating Disps", dt = 0.25, color = :magenta)
+    p = Progress(CM.n_configs; desc="Calculating Energies", dt = 0.25, color = :magenta)
     @tasks for n in 1:CM.n_configs
         @set begin
             ntasks = n_threads
