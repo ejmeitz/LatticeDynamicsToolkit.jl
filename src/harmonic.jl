@@ -1,4 +1,4 @@
-export dynmat_gamma, get_modes
+export dynmat_gamma, get_modes, harmonic_properties
 
 function dynmat_gamma(fc_sc::IFC2, sc::CrystalStructure)
 
@@ -38,13 +38,11 @@ function get_modes(D::Hermitian)
 end
 
 
-
-function harmonic_properties(T, lim::Limit, ω::AbstractVector, normalization)
-    F₀ = F_harmonic(ω, T, lim) / normalization
-    S₀ = S_harmonic(ω, T, lim) / normalization
-    U₀ = U_harmonic(ω, T, lim) / normalization
-    Cᵥ₀ = Cᵥ_harmonic(ω, T, lim) / normalization
-
+function harmonic_properties(T,  ω::AbstractVector, ::Type{L}) where {L <: Limit}
+    F₀ = F_harmonic(ω, T, L)
+    S₀ = S_harmonic(ω, T, L)
+    U₀ = U_harmonic(ω, T, L)
+    Cᵥ₀ = Cᵥ_harmonic(ω, T, L)
     return F₀, S₀, U₀, Cᵥ₀
 end
 
@@ -89,13 +87,14 @@ function F_harmonic(ω, T, ::Type{Classical})
 end
 
 function S_harmonic(ω, T, ::Type{Quantum})
-    kBT = kB_HartreeB * T
+    kBT = kB_Hartree * T
     f = (freq) -> ((freq/kBT) / (exp(freq/kBT) - 1)) - log(1 - exp(-freq/kBT))
     return kB * sum_over_freqs(ω, f)
 end
 
 function S_harmonic(ω, T, ::Type{Classical})
-    f = (freq) -> (1 - log(freq/(kB * T)))
+    kBT = kB_Hartree * T
+    f = (freq) -> (1 - log(freq/kBT))
     return kB_Hartree * sum_over_freqs(ω, f)
 end
 

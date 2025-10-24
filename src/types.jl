@@ -2,7 +2,8 @@ export
     IFC2, IFC3, IFC4,
     CrystalStructure, ConfigSettings,
     ClassicalConfigSettings, QuantumConfigSettings,
-    LAMMPSCalculator
+    LAMMPSCalculator,
+    Quantum, Classical, Limit
 
 abstract type IFCs end
 
