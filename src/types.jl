@@ -189,17 +189,35 @@ AtomsBase.atomic_number(s::CrystalStructure, i::Union{Integer, AbstractVector}) 
 
 ######################
 
-abstract type ConfigSettings end
+abstract type Limit end
+struct Quantum <: Limit end
+struct Classical <: Limit end
 
-struct QuantumConfigSettings <: ConfigSettings
+######################
+
+# abstract type ConfigSettings end
+
+struct ConfigSettings{L <: Limit}
     n_configs::Int
     temperature::Float64
 end
 
-struct ClassicalConfigSettings <: ConfigSettings
-    n_configs::Int
-    temperature::Float64
+function ConfigSettings(n_configs::Int, temperature::Float64, ::Type{L}) where {L <: Limit}
+    return ConfigSettings{L}(n_configs, temperature)
 end
+
+const QuantumConfigSettings = ConfigSettings{Quantum}
+const ClassicalConfigSettings = ConfigSettings{Classical}
+
+# struct QuantumConfigSettings <: ConfigSettings
+#     n_configs::Int
+#     temperature::Float64
+# end
+
+# struct ClassicalConfigSettings <: ConfigSettings
+#     n_configs::Int
+#     temperature::Float64
+# end
 
 ######################
 
@@ -241,7 +259,7 @@ Arguments:
     difficult. By providing this dictionary you can overide the type label assigned to each unique species. 
 - `logfile_path::String = "none"` : Path where LAMMPS logfile is written. Defaults to no log file. 
 """
-mutable struct LAMMPSCalculator{T}
+mutable struct LAMMPSCalculator{T, S}
     lmp::T # T will be LMP but that is not available here
-    last_updated::Int
+    pot_cmds::S # S will be String or Vector{String}
 end

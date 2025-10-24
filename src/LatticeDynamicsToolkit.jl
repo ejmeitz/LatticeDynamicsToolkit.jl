@@ -15,6 +15,7 @@ const periodic_table = PeriodicTable.elements
 
 const lo_tol = 1e-5
 const lo_sqtol = lo_tol^2
+const lo_freqtol = lo_tol*1e-4
 
 # Hartrees to eV
 const Hartree_to_eV = 27.21138602
@@ -51,7 +52,7 @@ const frequency_THz_to_Hartree=1.0/frequency_Hartree_to_THz
 
 include("util.jl")
 include("types.jl")
-include("modes.jl")
+include("harmonic.jl")
 include("distance_table.jl")
 include("io.jl")
 include("remap.jl")

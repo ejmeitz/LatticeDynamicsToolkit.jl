@@ -15,7 +15,7 @@ import Random: randn!
 
 function LatticeDynamicsToolkit.LAMMPSCalculator(
         sys::CrystalStructure,
-        potential_definition::Union{String, Array{String}};
+        potential_definition::Union{String, Vector{String}};
         label_type_map::Dict{Symbol, Int} = Dict{Symbol, Int}(),
         logfile_path::String = "none",
         unit_system::String = "metal"
@@ -113,13 +113,13 @@ function LatticeDynamicsToolkit.LAMMPSCalculator(
     command(lmp, "fix hold all nve")
     command(lmp, "fix freeze all setforce 0.0 0.0 0.0")
     command(lmp, "velocity all set 0 0 0")
-    command(lmp, "timestep 1.0")
+    command(lmp, "timestep 0.01") # timestep won't matter since we freeze atoms
 
     # This allows LAMMPS to register the computes/fixes
     # and build the neighbor list. 
     command(lmp, "run 0 post no")
 
-    return LatticeDynamicsToolkit.LAMMPSCalculator{typeof(lmp)}(lmp, -1)
+    return LatticeDynamicsToolkit.LAMMPSCalculator{typeof(lmp), typeof(potential_definition)}(lmp, potential_definition)
 end
 
 AtomsCalculators.energy_unit(inter::LAMMPSCalculator) = NoUnits

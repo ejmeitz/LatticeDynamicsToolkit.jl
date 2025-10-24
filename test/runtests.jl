@@ -79,7 +79,7 @@ end
     temperature = 1300.0
     settings = ClassicalConfigSettings(n_configs, temperature)
 
-    tep_energies = TDEPToolkit.make_energy_dataset(
+    tep_energies = make_energy_dataset(
         settings,
         uc,
         sc;
@@ -101,7 +101,7 @@ end
     uc = CrystalStructure(ucposcar_path)
     sc = CrystalStructure(ssposcar_path)
 
-    n_configs = 3
+    n_configs = 100_000
     temperature = 1300.0
     settings = ClassicalConfigSettings(n_configs, temperature)
 
