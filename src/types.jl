@@ -187,16 +187,73 @@ AtomsBase.atomic_symbol(s::CrystalStructure, i::Union{Integer, AbstractVector}) 
 AtomsBase.atomic_number(s::CrystalStructure, ::Colon) = atomic_number.(s.species)
 AtomsBase.atomic_number(s::CrystalStructure, i::Union{Integer, AbstractVector}) = atomic_number(s.species[i])
 
+######################
+
+# Gamma centered IBZ mesh
+struct IBZMesh{I <: Integer}
+    mesh::SVector{3, I}
+    k_ibz::Vector{SVector{3, Float64}}
+    weights::Vector{Float64}
+end
+
+Base.length(bzm::IBZMesh) = length(bzm.k_ibz)
+Base.eachindex(bzm::IBZMesh) = eachindex(bzm.weights)
+
+# Add IBZ constructor from Spglib using the types defined here
+function Spglib.BrillouinZoneMesh(uc::CrystalStructure, mesh; symprec = 1e-5)
+
+    cell = Spglib.SpglibCell(
+        uc.L,
+        uc.x_frac,
+        Int.(AtomsBase.atomic_number(uc, :))
+    )
+
+    #! PROBABLY SHOULD FIGURE OUT IF THE CELL PASSED HERE MATCHES
+    #! PRIMITIVE CELL USED BY SPGLIB
+
+    return Spglib.get_ir_reciprocal_mesh(cell, mesh, symprec)
+end
+
+function IBZMesh(uc::CrystalStructure, mesh; symprec = 1e-5)
+
+    bzm = Spglib.BrillouinZoneMesh(uc, mesh; symprec = symprec)
+    
+    N = length(bzm.grid_address)
+
+    # Indices of irreducible k-points (sorted for stable downstream use)
+    ir_idx = sort!(unique(bzm.ir_mapping_table))
+
+    if length(ir_idx) > 0.5 * length(bzm.grid_address)
+        @warn "The number of irreducible k-points ($(length(ir_idx))) is more than half the total number of k-points ($(length(bzm.grid_address)))." *
+              " This may indicate that the symmetry detection failed. Consider increasing symprec (currently $(symprec))."
+    end
+
+    counts = zeros(Int, N)
+    @inbounds for i in 1:N
+        j = bzm.ir_mapping_table[i]
+        counts[j] += 1
+    end
+    multiplicity = counts[ir_idx]
+
+    # Get list of fractional IBZ points
+    invmesh = 1.0 ./ Float64.(bzm.mesh)
+    k_ibz = Vector{SVector{3,Float64}}(undef, length(ir_idx))
+    @inbounds for (p, j) in pairs(ir_idx)
+        k_ibz[p] = (Float64.(bzm.grid_address[j])) .* invmesh
+    end
+
+    weights = multiplicity ./ sum(multiplicity)
+
+    @assert length(k_ibz) == length(weights) "something wrong in IBZMesh construction"
+
+    return IBZMesh(bzm.mesh, k_ibz, weights)
+end
 
 ######################
 
 abstract type Limit end
 struct Quantum <: Limit end
 struct Classical <: Limit end
-
-######################
-
-# abstract type ConfigSettings end
 
 struct ConfigSettings{L <: Limit}
     n_configs::Int
@@ -207,18 +264,9 @@ function ConfigSettings(n_configs::Int, temperature::Float64, ::Type{L}) where {
     return ConfigSettings{L}(n_configs, temperature)
 end
 
+# Type aliases
 const QuantumConfigSettings = ConfigSettings{Quantum}
 const ClassicalConfigSettings = ConfigSettings{Classical}
-
-# struct QuantumConfigSettings <: ConfigSettings
-#     n_configs::Int
-#     temperature::Float64
-# end
-
-# struct ClassicalConfigSettings <: ConfigSettings
-#     n_configs::Int
-#     temperature::Float64
-# end
 
 ######################
 

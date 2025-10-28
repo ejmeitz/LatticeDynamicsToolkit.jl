@@ -90,6 +90,7 @@ end
 
 end
 
+#TODO TEST WITH THE 8 ATOM UNIT CELL TO VERIFY I GET SAME RESULTS
 @testset "Energy Calculator" begin
     
     data_dir = raw"C:\Users\ejmei\repos\TDEP_IFCs.jl\data"

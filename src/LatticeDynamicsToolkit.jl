@@ -6,6 +6,7 @@ using LinearAlgebra
 using StaticArrays
 using CellListMap
 using OhMyThreads
+import Spglib
 import Unitful: ustrip
 import PeriodicTable
 using ProgressMeter

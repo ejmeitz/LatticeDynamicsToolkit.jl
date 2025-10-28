@@ -176,7 +176,7 @@ function _make_energy_dataset(
     LatticeDynamicsToolkit.remap_checks(sc, valid_ifcs...)
 
     dynmat = dynmat_gamma(ifc2, sc)
-    freqs_sq, phi = get_modes(dynmat)
+    freqs_sq, phi = get_modes(dynmat, Val{true}())
     freqs = sqrt.(freqs_sq)  # Will error for negative frequencies which I am ok with
 
     tep_energies = zeros(SVector{3, Float64}, cc_settings.n_configs)
