@@ -48,16 +48,18 @@ const forceconstant_4th_HartreeBohr_to_eVA = 1.0 / forceconstant_4th_eVA_to_Hart
 
 const frequency_Hartree_to_THz=1e-12/(2*pi)/hbar_Hartree
 const frequency_THz_to_Hartree=1.0/frequency_Hartree_to_THz
-
+const frequency_Hartree_to_rads=1.0/hbar_Hartree
 
 
 include("util.jl")
 include("types.jl")
-include("harmonic.jl")
+include("harmonic/dynmat.jl")
+include("harmonic/thermo.jl")
+include("harmonic/dos.jl")
+include("harmonic/canonical_configs.jl")
 include("distance_table.jl")
 include("io.jl")
 include("remap.jl")
-include("canonical_configs.jl")
 include("epot.jl")
 
 

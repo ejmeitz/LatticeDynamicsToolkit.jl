@@ -4,10 +4,10 @@ using TDEP_IFCs
 
 data_dir = abspath(joinpath(@__DIR__, "..", "data"))
 
-function load_sw_ifcs(ucposcar_path)
-    ifc2_path = joinpath(data_dir, "100K_3UC", "infile.forceconstant")
-    ifc3_path = joinpath(data_dir, "100K_3UC", "infile.forceconstant_thirdorder")
-    ifc4_path = joinpath(data_dir, "100K_3UC", "infile.forceconstant_fourthorder")
+function load_sw_ifcs(ucposcar_path, T)
+    ifc2_path = joinpath(data_dir, "$(Int(T))K_3UC", "infile.forceconstant")
+    ifc3_path = joinpath(data_dir, "$(Int(T))K_3UC", "infile.forceconstant_thirdorder")
+    ifc4_path = joinpath(data_dir, "$(Int(T))K_3UC", "infile.forceconstant_fourthorder")
 
     ifc2 = read_ifc2(ifc2_path, ucposcar_path)
     ifc3 = read_ifc3(ifc3_path, ucposcar_path)
@@ -95,16 +95,16 @@ end
     
     data_dir = raw"C:\Users\ejmei\repos\TDEP_IFCs.jl\data"
     ucposcar_path = joinpath(data_dir, "infile.ucposcar")
-    ssposcar_path = joinpath(data_dir, "100K_3UC", "infile.ssposcar")
+    ssposcar_path = joinpath(data_dir, "infile.ssposcar")
 
-    ifc2, ifc3, ifc4 = load_sw_ifcs(ucposcar_path)
+    T = 100.0
+    ifc2, ifc3, ifc4 = load_sw_ifcs(ucposcar_path, T)
 
     uc = CrystalStructure(ucposcar_path)
     sc = CrystalStructure(ssposcar_path)
 
     n_configs = 100_000
-    temperature = 1300.0
-    settings = ClassicalConfigSettings(n_configs, temperature)
+    settings = ClassicalConfigSettings(n_configs, T)
 
     sw_pot = joinpath(data_dir, "Si.sw")
     pot_cmds = ["pair_style sw", "pair_coeff * * \"$(sw_pot)\" Si"]

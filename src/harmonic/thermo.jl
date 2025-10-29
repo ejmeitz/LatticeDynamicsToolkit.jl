@@ -1,93 +1,4 @@
-export 
-    dynmat_gamma,
-    get_modes, 
-    harmonic_properties
-
-q_cart_from_frac(cell::CrystalStructure, q_frac::SVector{3,Float64}) = 2pi .* (cell.L_inv' * q_frac)
-
-function dynmat_gamma(fc_sc::IFC2, sc::CrystalStructure)
-
-    na = length(sc)
-    nb = 3*na
-
-    @assert na == fc_sc.na "Failed building dynmat. IFCs build on $(fc_sc.na) cell, but supercell has $(na) atoms"
-
-    D = zeros(nb, nb)
-
-    @inbounds for a1 in 1:na
-        r1 = 3*(a1-1)
-        w1 = sc.invsqrtm[a1]
-        for pair in get_interactions(fc_sc, a1)
-            a2 = pair.idxs[2]
-            r2 = 3*(a2-1)
-            D[r1+1:r1+3, r2+1:r2+3] .= pair.ifcs .* (w1 * sc.invsqrtm[a2])  
-        end
-    end
-
-    # enforce exact symmetry
-    @inbounds for j in 1:nb, i in j+1:nb
-        s = 0.5 * (D[i,j] + D[j,i])
-        D[i,j] = s; D[j,i] = s
-    end
-
-    return Hermitian(D)
-
-end
-
-
-function dynmat_q(
-        fc_uc::IFC2,
-        uc::CrystalStructure,
-        q_frac::SVector{3,Float64};
-    )
-
-    na = length(uc)
-    nb = 3*na
-
-    @assert na == fc_uc.na "Failed building dynmat at q-point. IFCs build on $(fc_uc.na) cell, but unitcell has $(na) atoms"
-
-    D_q = zeros(ComplexF64, nb, nb)
-
-    q_cart = q_cart_from_frac(uc, q_frac) 
-
-    @inbounds for a1 in 1:na
-        inv_m_a1 = uc.invsqrtm[a1]
-        r1 = 3*(a1 - 1)
-        for fc in get_interactions(fc_uc, a1)        
-            a2 = fc.idxs[2]
-            r2 = 3*(a2-1)
-
-            phase = cis(dot(q_cart, fc.lvs[2]))  # exp(im*(q · r))
-            D_q[r1+1:r1+3, r2+1:r2+3] .+= fc.ifcs .* (phase * (inv_m_a1 * uc.invsqrtm[a2]))
-        end
-    end
-    
-    # Check its actually Hermetian
-    c0 = 0.0
-    for i in 1:nb
-         for j in (i+1):nb
-            c0 += D_q[i,j] - conj(D_q[j,i])
-         end
-    end
-    if abs(c0) > lo_sqtol*nb
-        @warn "Dynamical matrix at q=$(q_frac) is not Hermitian within tolerance, |Σ D_ij - D_ji*| = $(abs(c0))"
-    end
-
-    return Hermitian(D_q)
-end
-
-function get_modes(D::Hermitian, gamma_point::Val{true})
-    eig_stuff = eigen(D)
-    freqs_sq = eig_stuff.values
-    idx_rt = sortperm(abs.(freqs_sq))
-    @views freqs_sq[idx_rt[1:3]] .= 0.0
-    return freqs_sq, eig_stuff.vectors
-end
-
-function get_modes(D::Hermitian, gamma_point::Val{false})
-    eig_stuff = eigen(D)
-    return eig_stuff.values, eig_stuff.vectors
-end
+export harmonic_properties
 
 function harmonic_properties(
         T, 
@@ -188,8 +99,6 @@ function sum_over_freqs(
 
     @assert length(uc) == ifc2.na "Failed summing over freqs. IFCs build on $(ifc2.na) cell, but unitcell has $(length(uc)) atoms"
 
-    is_gamma(q) = sqnorm(q) < lo_sqtol
-
     res = @tasks for i in eachindex(ibz.weights)
 
         w = ibz.weights[i]
@@ -232,6 +141,58 @@ U_harmonic(freqs, T, ::Type{L}) where {L <: Limit} = sum_over_freqs(freqs, ω ->
 F_harmonic(freqs, T, ::Type{L}) where {L <: Limit} = sum_over_freqs(freqs, ω -> F_harmonic_single(ω, kB_Hartree*T, L))
 S_harmonic(freqs, T, ::Type{L}) where {L <: Limit} = sum_over_freqs(freqs, ω -> S_harmonic_single(ω, kB_Hartree*T, L))
 Cv_harmonic(freqs, T, ::Type{L}) where {L <: Limit} = sum_over_freqs(freqs, ω -> Cv_harmonic_single(ω, kB_Hartree*T, L))
+
+
+function sum_over_freqs_dense(
+    f::F,
+    mesh::SVector{3,Int},
+    uc::CrystalStructure,
+    ifc2::IFC2;
+    n_threads::Integer = Threads.nthreads(),
+) where {F}
+
+    @assert length(uc) == ifc2.na "IFCs built on $(ifc2.na) atom cell, but unitcell has $(length(uc)) atoms"
+
+    Nk = prod(mesh)
+
+    # map a linear index -> (i,j,k) -> q (SVector{3,Float64})
+    @inline function q_from_linidx(idx::Int)
+        m1, m2, m3 = mesh
+        # 0-based indices in each dim
+        k0 = (idx-1) % m3
+        j0 = ((idx-1) ÷ m3) % m2
+        i0 = ((idx-1) ÷ (m2*m3)) % m1
+        q1 = (i0 / m1) - 0.5
+        q2 = (j0 / m2) - 0.5
+        q3 = (k0 / m3) - 0.5
+        return SVector{3,Float64}(q1, q2, q3)
+    end
+
+    res = @tasks for lin in 1:Nk
+        @set begin
+            ntasks = n_threads
+            reducer = +
+        end
+
+        q = q_from_linidx(lin)
+
+        D_q = dynmat_q(ifc2, uc, q)
+        freqs_sq, _ = get_modes(D_q, Val{is_gamma(q)}())
+        # Guard against tiny negative roundoff before sqrt
+        freqs = sqrt.(max.(freqs_sq, 0.0))
+
+        acc = 0.0
+        @inbounds for ω in freqs
+            if ω > lo_freqtol
+                acc += f(ω)
+            end
+        end
+
+        acc
+    end
+
+    return res / Nk / length(uc)
+end
 
 # function V_harmonic(ifc2::AbstractMatrix, u::AbstractVector)
 #     return 0.5 * ((transpose(u) * ifc2) * u)
