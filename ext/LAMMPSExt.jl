@@ -196,7 +196,7 @@ function _make_energy_dataset(
         n_threads = n_threads
     )
 
-    return Hartree_to_eV .* tep_energies, V, freqs
+    return Hartree_to_eV .* tep_energies, V
 
 end
 

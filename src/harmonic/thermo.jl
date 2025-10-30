@@ -43,9 +43,10 @@ function harmonic_properties(
         n_threads = n_threads
     )
 
-    #! IF THE USER GIVES NON-PRIMITIVE CELL, THIS MIGHT CAUSE ISSUES?
-    #! SPGLIB GENERATES K-MESH FOR PRIMITIVE CELL
-    N = length(uc)
+    # This is the cell used by Spglib when
+    # building the IBZ, so this we use this 
+    # to get the values per atom.
+    N = ibz.n_atoms_prim
 
     return F₀ / N, S₀ / N, U₀ / N, Cᵥ₀ / N
 end

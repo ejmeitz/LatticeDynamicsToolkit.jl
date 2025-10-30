@@ -101,7 +101,6 @@ end
 
 ##############################
 
-# Could make this an AtomsBase compatible type
 struct CrystalStructure <: AbstractSystem{3}
     x_frac::Vector{SVector{3,Float64}}
     x_cart::Vector{SVector{3,Float64}} # bohr
@@ -109,15 +108,17 @@ struct CrystalStructure <: AbstractSystem{3}
     m::Vector{Float64} # in emu
     invsqrtm::Vector{Float64} # 1/sqrt(m)
     L::SMatrix{3,3,Float64,9} # bohr
-    L_inv::SMatrix{3,3,Float64,9} 
+    L_inv::SMatrix{3,3,Float64,9}
+    sym_data::Spglib.Dataset
 end
+
 
 """
     CrystalStructure(poscar_path::String)
 
 - `poscar_path::String` : Path to POSCAR file to parse, only fractional coords supported
 """
-function CrystalStructure(poscar_path::String) 
+function CrystalStructure(poscar_path::String; symprec::Float64 = 1e-5) 
 
     species, x_frac, cell = read_poscar_data(poscar_path)
 
@@ -137,8 +138,21 @@ function CrystalStructure(poscar_path::String)
     m = ustrip.([periodic_table[s].atomic_mass for s in species]) .* amu_to_emu 
     invsqrtm = 1.0 ./ sqrt.(m)
 
-    return CrystalStructure(x_frac, x_cart, species, m, invsqrtm, cell, cell_inv)
+    spglib_cell = Spglib.SpglibCell(
+        cell,
+        x_frac,
+        atomic_number.(species)
+    )
+
+    sym_data = Spglib.get_dataset(spglib_cell, symprec)
+
+    return CrystalStructure(x_frac, x_cart, species, m, invsqrtm, cell, cell_inv, sym_data)
 end
+
+
+volume(cs::CrystalStructure) = det(cs.L)
+primitive_volume(cs::CrystalStructure) = det(cs.sym_data.primitive_lattice)
+n_atoms_primitive(cs::CrystalStructure) = length(unique(cs.sym_data.mapping_to_primitive))
 
 Base.length(sys::CrystalStructure) = length(sys.x_frac)
 Base.size(sys::CrystalStructure) = size(sys.x_frac)
@@ -194,10 +208,14 @@ struct IBZMesh{I <: Integer}
     mesh::SVector{3, I}
     k_ibz::Vector{SVector{3, Float64}}
     weights::Vector{Float64}
+    radius::Float64 # simple mesh so all have same radius
+    n_atoms_prim::Float64
 end
 
-Base.length(bzm::IBZMesh) = length(bzm.k_ibz)
-Base.eachindex(bzm::IBZMesh) = eachindex(bzm.weights)
+
+n_full_q_point(ibz::IBZMesh) = prod(ibz.mesh)
+Base.length(ibz::IBZMesh) = length(ibz.k_ibz)
+Base.eachindex(ibz::IBZMesh) = eachindex(ibz.weights)
 
 # Add IBZ constructor from Spglib using the types defined here
 function Spglib.BrillouinZoneMesh(uc::CrystalStructure, mesh; symprec = 1e-5)
@@ -207,9 +225,6 @@ function Spglib.BrillouinZoneMesh(uc::CrystalStructure, mesh; symprec = 1e-5)
         uc.x_frac,
         Int.(AtomsBase.atomic_number(uc, :))
     )
-
-    #! PROBABLY SHOULD FIGURE OUT IF THE CELL PASSED HERE MATCHES
-    #! PRIMITIVE CELL USED BY SPGLIB
 
     return Spglib.get_ir_reciprocal_mesh(cell, mesh, symprec)
 end
@@ -246,7 +261,12 @@ function IBZMesh(uc::CrystalStructure, mesh; symprec = 1e-5)
 
     @assert length(k_ibz) == length(weights) "something wrong in IBZMesh construction"
 
-    return IBZMesh(bzm.mesh, k_ibz, weights)
+    # cbrt(3 / (4*pi*V*Nk))
+    radius = cbrt(3.0/primitive_volume(uc)/prod(mesh)/4.0/pi)
+
+    N_prim = n_atoms_primitive(uc)
+
+    return IBZMesh(bzm.mesh, k_ibz, weights, radius, N_prim)
 end
 
 ######################
