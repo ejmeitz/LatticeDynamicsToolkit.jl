@@ -209,7 +209,7 @@ struct IBZMesh{I <: Integer}
     k_ibz::Vector{SVector{3, Float64}}
     weights::Vector{Float64}
     radius::Float64 # simple mesh so all have same radius
-    n_atoms_prim::Float64
+    n_atoms_prim::Integer
 end
 
 
@@ -268,6 +268,16 @@ function IBZMesh(uc::CrystalStructure, mesh; symprec = 1e-5)
 
     return IBZMesh(bzm.mesh, k_ibz, weights, radius, N_prim)
 end
+
+######################
+
+struct DispersionData{N} # N = N branch
+    ibz::IBZMesh
+    freqs::Vector{SVector{N, Float64}}  # each entry sorted smallest --> largest
+    vels::Vector{SMatrix{3, N, Float64}} # Length is Nq
+end 
+
+# Constructor in dispersion.jl
 
 ######################
 

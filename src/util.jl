@@ -6,14 +6,39 @@ to_cart_coords(cell::AbstractMatrix{L}, position::AbstractVector{L}) where L = c
 
 sqnorm(v::AbstractVector) = dot(v, v)
 
+negsqrt(x) = sign(x) * sqrt(abs(x))
+
+@inline function chop(x::Float64, tol::Float64)
+    @inbounds for v in _WELLDEFINED_SMALL_64
+        if abs(x - v) < tol
+            return v
+        end
+    end
+    return x
+end
+
+@inline function chop(x::ComplexF64, tol::Float64)
+    re = real(x); im = imag(x)
+    if abs(re) < tol; re = zero(T); end
+    if abs(im) < tol; im = zero(T); end
+    return ComplexF64(re, im)
+end
+
+function chop!(x::AbstractArray{T}, tol::Float64) where {T <: Union{Float64, ComplexF64}}
+    @inbounds for i in eachindex(x)
+        x[i] = chop(x[i], tol)
+    end
+    return x
+end
+
+chop3(v::SVector{3,T}, chop_tol::T) where T = SVector{3,T}(chop.(v, Ref(chop_tol)))
+
 
 ##########################################
 # Stuff for reading forceconstant files #
 ##########################################
 
 readline_skip_text!(io, T) = parse(T, first(split(strip(readline(io)))))
-
-chop3(v::SVector{3,T}, chop_tol::T) where T = SVector{3,T}(ntuple(i -> (abs(v[i]) < chop_tol ? zero(T) : v[i]), 3))
 
 
 @inline function read_svec3!(io, ::Type{T}; conv = T(1.0)) where T

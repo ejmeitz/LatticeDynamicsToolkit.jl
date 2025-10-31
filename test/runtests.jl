@@ -16,7 +16,6 @@ function load_sw_ifcs(ucposcar_path, T)
     return ifc2, ifc3, ifc4
 end
 
-
 @testset "IO" begin 
 
     ucposcar_path = joinpath(data_dir, "infile.ucposcar")
