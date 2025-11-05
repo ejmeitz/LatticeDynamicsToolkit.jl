@@ -1,124 +1,5 @@
 export DOS
 
-function _default_smearing(dd::DispersionData{N_BRANCH}) where N_BRANCH
-    
-    n_q_point = length(dd.freqs)
-    σs = zeros(Float64, N_BRANCH)
-
-    for i in 1:N_BRANCH
-        f = 0.0
-        freqs_band = [dd.freqs[j][i] for j in 1:n_q_point]
-        sort!(freqs_band)
-        for j in 1:(n_q_point - 1)
-            f = max(f, abs(freqs_band[j+1] - freqs_band[j]))
-        end
-        σs[i] = f
-    end
-
-    # Copied from TDEP, help avoid issues when there are flat bands
-    f = maximum(σs) / 5.0
-    σs = max.(σs, Ref(f))
-    return σs
-end
-
-
-const adaptive_sigma_largefactor = 4.0
-const adaptive_sigma_smallfactor = 0.25
-const adaptive_sigma_prefactor = 2*pi/sqrt(2.0)
-function _adaptive_sigma(
-        radius::Float64,
-        gradient::SVector{3, Float64},
-        default_σ::Float64,
-        scale::Float64
-    )
-    σ = scale * adaptive_sigma_prefactor * radius * norm(gradient)
-    σ = max(default_σ*adaptive_sigma_smallfactor*scale, σ)
-    σ = min(default_σ*adaptive_sigma_largefactor*scale, σ)
-    return σ
-end
-
-
-"""
-    group_velocities(ω², U, ∂D∂q)
-
-Faithful port of the TDEP group-velocity computation.
-
-Inputs
----------
-- `ω::AbstractVector{<:Real}`  # frequencies (sorted ascending)
-- `U::Matrix{<:Complex} `      # eigenvectors as columns (nb×nb), orthonormal
-- `∂D∂q::Array{ComplexF64,3}`  # ∂D/∂q, shape nb×nb×3 (Hermitian slices)
-
-Returns
----------
-- V :: Matrix{Float64} of size (3, nb), with V[α, i] = ∂ω_i/∂q_α
-"""
-function group_velocities(
-        ω::AbstractVector{<:Real},
-        U::Matrix{<:Complex},
-        ∂D∂q::Array{ComplexF64,3}
-    )
-
-    nb = length(ω)
-
-    # Detect subspaces (Fortran-style)
-    subspaces, has_deg = find_degenerate_subspaces(ω)
-
-    V_dwsq = zeros(Float64, 3, nb)  # d(ω²)/dq
-    V      = @MMatrix zeros(Float64, 3, nb)  # dω/dq
-    tmp    = similar(view(U, :, 1)) # Complex workspace (nb)
-
-    if !has_deg
-        # Non-degenerate path
-        for i in 1:nb
-            ui = @view U[:, i]
-            for α in 1:3
-                @views mul!(tmp, ∂D∂q[:,:,α], ui)       # tmp = (∂D/∂q_α) * e_i
-                V_dwsq[α, i] = real(dot(ui, tmp))    # conj inner product
-            end
-        end
-    else
-        # Mixed: singleton subspaces use non-degenerate; larger ones use projected subspace
-        for S in subspaces
-            if length(S) == 1
-                i = S[1]
-                ui = @view U[:, i]
-                for α in 1:3
-                    @views mul!(tmp, ∂D∂q[:,:,α], ui)
-                    V_dwsq[α, i] = real(dot(ui, tmp))
-                end
-            else
-                US = @views U[:, S]     # nb×mb
-                mb = size(US, 2)
-                for α in 1:3
-                    Hα = Hermitian(US' * (@view ∂D∂q[:,:,α]) * US)  # mb×mb
-                    λα = eigen(Hα).values                         # real
-                    avg = sum(λα) / mb
-                    for i in S
-                        V_dwsq[α, i] = avg
-                    end
-                end
-            end
-        end
-    end
-
-    # Convert dω²/dq -> dω/dq, force group velocities at Γ to be 0
-    # Also forces group velocities of negative frequencies to 0
-    for i in 1:nb
-        ωi = ω[i]
-        if ωi > lo_freqtol
-            @views V[:, i] .= V_dwsq[:, i] ./ (2ωi)
-        else
-            @views V[:, i] .= 0.0
-        end
-    end
-
-    # zero anything less than 1 nm / s 
-    chop!(V, 1E-9/groupvel_Hartreebohr_to_ms)
-
-    return SMatrix(V)
-end
-
 function DispersionData(
         uc::CrystalStructure,
         ifc2::IFC2,
@@ -263,6 +144,88 @@ function DOS(
 end
 
 """
+    group_velocities(ω², U, ∂D∂q)
+
+Faithful port of the TDEP group-velocity computation.
+
+Inputs
+---------
+- `ω::AbstractVector{<:Real}`  # frequencies (sorted ascending)
+- `U::Matrix{<:Complex} `      # eigenvectors as columns (nb×nb), orthonormal
+- `∂D∂q::Array{ComplexF64,3}`  # ∂D/∂q, shape nb×nb×3 (Hermitian slices)
+
+Returns
+---------
+- V :: Matrix{Float64} of size (3, nb), with V[α, i] = ∂ω_i/∂q_α
+"""
+function group_velocities(
+        ω::AbstractVector{<:Real},
+        U::Matrix{<:Complex},
+        ∂D∂q::Array{ComplexF64,3}
+    )
+
+    nb = length(ω)
+
+    # Detect subspaces (Fortran-style)
+    subspaces, has_deg = find_degenerate_subspaces(ω)
+
+    V_dwsq = zeros(Float64, 3, nb)  # d(ω²)/dq
+    V      = @MMatrix zeros(Float64, 3, nb)  # dω/dq
+    tmp    = similar(view(U, :, 1)) # Complex workspace (nb)
+
+    if !has_deg
+        # Non-degenerate path
+        for i in 1:nb
+            ui = @view U[:, i]
+            for α in 1:3
+                @views mul!(tmp, ∂D∂q[:,:,α], ui)       # tmp = (∂D/∂q_α) * e_i
+                V_dwsq[α, i] = real(dot(ui, tmp))    # conj inner product
+            end
+        end
+    else
+        # Mixed: singleton subspaces use non-degenerate; larger ones use projected subspace
+        for S in subspaces
+            if length(S) == 1
+                i = S[1]
+                ui = @view U[:, i]
+                for α in 1:3
+                    @views mul!(tmp, ∂D∂q[:,:,α], ui)
+                    V_dwsq[α, i] = real(dot(ui, tmp))
+                end
+            else
+                US = @views U[:, S]     # nb×mb
+                mb = size(US, 2)
+                for α in 1:3
+                    Hα = Hermitian(US' * (@view ∂D∂q[:,:,α]) * US)  # mb×mb
+                    λα = eigen(Hα).values                         # real
+                    avg = sum(λα) / mb
+                    for i in S
+                        V_dwsq[α, i] = avg
+                    end
+                end
+            end
+        end
+    end
+
+    # Convert dω²/dq -> dω/dq, force group velocities at Γ to be 0
+    # Also forces group velocities of negative frequencies to 0
+    for i in 1:nb
+        ωi = ω[i]
+        if ωi > lo_freqtol
+            @views V[:, i] .= V_dwsq[:, i] ./ (2ωi)
+        else
+            @views V[:, i] .= 0.0
+        end
+    end
+
+    # zero anything less than 1 nm / s 
+    chop!(V, 1E-9/groupvel_Hartreebohr_to_ms)
+
+    return SMatrix(V)
+end
+
+
+"""
     find_degenerate_subspaces(w2; freq_tol = lo_freqtol)
 
 Given sorted frequencies ω (ascending), partition the mode indices `1:nb`
@@ -296,6 +259,43 @@ function find_degenerate_subspaces(ω::AbstractVector{<:Real})
 
     has_deg = any(length(S) > 1 for S in subspaces)
     return subspaces, has_deg
+end
+
+function _default_smearing(dd::DispersionData{N_BRANCH}) where N_BRANCH
+    
+    n_q_point = length(dd.freqs)
+    σs = zeros(Float64, N_BRANCH)
+
+    for i in 1:N_BRANCH
+        f = 0.0
+        freqs_band = [dd.freqs[j][i] for j in 1:n_q_point]
+        sort!(freqs_band)
+        for j in 1:(n_q_point - 1)
+            f = max(f, abs(freqs_band[j+1] - freqs_band[j]))
+        end
+        σs[i] = f
+    end
+
+    # Copied from TDEP, help avoid issues when there are flat bands
+    f = maximum(σs) / 5.0
+    σs = max.(σs, Ref(f))
+    return σs
+end
+
+
+const adaptive_sigma_largefactor = 4.0
+const adaptive_sigma_smallfactor = 0.25
+const adaptive_sigma_prefactor = 2*pi/sqrt(2.0)
+function _adaptive_sigma(
+        radius::Float64,
+        gradient::SVector{3, Float64},
+        default_σ::Float64,
+        scale::Float64
+    )
+    σ = scale * adaptive_sigma_prefactor * radius * norm(gradient)
+    σ = max(default_σ*adaptive_sigma_smallfactor*scale, σ)
+    σ = min(default_σ*adaptive_sigma_largefactor*scale, σ)
+    return σ
 end
 
 

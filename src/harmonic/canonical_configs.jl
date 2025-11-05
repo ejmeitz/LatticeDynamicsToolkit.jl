@@ -1,11 +1,10 @@
 export 
     canonical_configs, 
     canonical_configs_and_velocities, 
-    canonical_velocities, 
-    mean_amplitude
-
+    canonical_velocities
+    
 function bose_einstein(freq, temp)
-    x =  upreferred(freq / (kB_Hartree * temp))
+    x =  freq / (kB_Hartree * temp)
     return 1 / (exp(x) - 1)
 end
 

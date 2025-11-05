@@ -2,7 +2,7 @@ export
     IFC2, IFC3, IFC4,
     CrystalStructure, ConfigSettings,
     ClassicalConfigSettings, QuantumConfigSettings,
-    LAMMPSCalculator,
+    LAMMPSCalculator, ThermodynmicIntegration,
     Quantum, Classical, Limit
 
 abstract type IFCs end
@@ -208,7 +208,7 @@ struct IBZMesh{I <: Integer}
     mesh::SVector{3, I}
     k_ibz::Vector{SVector{3, Float64}}
     weights::Vector{Float64}
-    radius::Float64 # simple mesh so all have same radius
+    radius::Float64 # no integration weight included
     n_atoms_prim::Integer
 end
 
@@ -342,3 +342,10 @@ mutable struct LAMMPSCalculator{T, S}
     lmp::T # T will be LMP but that is not available here
     pot_cmds::S # S will be String or Vector{String}
 end
+
+
+
+"""
+TODO
+"""
+function ThermodynmicIntegration end
