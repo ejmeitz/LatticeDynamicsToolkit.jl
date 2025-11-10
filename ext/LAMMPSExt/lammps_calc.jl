@@ -105,9 +105,7 @@ function LatticeDynamicsToolkit.LAMMPSCalculator(
         command(lmp, "fix freeze all setforce 0.0 0.0 0.0")
         command(lmp, "velocity all set 0 0 0")
         command(lmp, "timestep 0.01") # timestep won't matter since we freeze atoms
-    else
-        #! INITIALIZE VELOCITIES??
-    end
+    end # if not single_point user is responsible for doing things like initializing velos, see TI.jl
 
     # This allows LAMMPS to register the computes/fixes
     # and build the neighbor list. 

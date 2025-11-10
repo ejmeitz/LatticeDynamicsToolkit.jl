@@ -6,7 +6,17 @@ to_cart_coords(cell::AbstractMatrix{L}, position::AbstractVector{L}) where L = c
 
 sqnorm(v::AbstractVector) = dot(v, v)
 
-negsqrt(x) = sign(x) * sqrt(abs(x))
+negsqrt(x::Real) = sign(x) * sqrt(abs(x))
+
+# Zeros out small complex parts
+# Converts large complex parts to negative real
+function clean_eigenvalue(freq_sq)
+    if abs(imag(freq_sq)) > lo_sqtol
+        return -abs(freq_sq)  # Mark as negative (imaginary freq)
+    else
+        return real(freq_sq)  # Take real part
+    end
+end
 
 @inline function chop(x::Float64, tol::Float64)
     @inbounds for v in _WELLDEFINED_SMALL_64

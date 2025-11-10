@@ -2,7 +2,7 @@ export
     IFC2, IFC3, IFC4,
     CrystalStructure, ConfigSettings,
     ClassicalConfigSettings, QuantumConfigSettings,
-    LAMMPSCalculator, ThermodynmicIntegration,
+    LAMMPSCalculator, ThermodynmicIntegration, TISettings,
     Quantum, Classical, Limit
 
 abstract type IFCs end
@@ -344,6 +344,22 @@ mutable struct LAMMPSCalculator{T, S}
 end
 
 
+"""
+TODO
+"""
+struct TISettings 
+    T::Float64
+    pot_cmds::Union{String, Vector{String}}
+    nsteps::Integer
+    nsteps_equil::Integer
+    n_lambda::Integer
+    dt_ps::Float64
+    T_damp::Float64
+end
+
+function TISettings(T, pot_cmds, nsteps, nsteps_equil; n_lambda = 9, dt_ps = 1e-3, T_damp = 100*dt_ps)
+    return TISettings(T, pot_cmds, nsteps, nsteps_equil, n_lambda, dt_ps, T_damp)
+end
 
 """
 TODO

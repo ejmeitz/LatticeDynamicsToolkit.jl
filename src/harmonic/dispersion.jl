@@ -41,7 +41,8 @@ function DispersionData(
         q_frac  = ibz.k_ibz[i]
         dynmat_and_derivative_q!(Dq, ∂D∂q, ifc2, uc, q_frac)
         freqs_sq, phi = get_modes(Hermitian(Dq), Val{is_gamma(q_frac)}())
-        freqs = SVector{nb, Float64}(negsqrt.(freqs_sq))
+        freqs_sq_real = clean_eigenvalue.(freqs_sq)
+        freqs = SVector{nb, Float64}(negsqrt.(freqs_sq_real))
 
         sortperm!(ix, freqs)
         freqs = freqs[ix]

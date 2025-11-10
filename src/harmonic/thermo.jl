@@ -109,9 +109,11 @@ function sum_over_freqs(
             ntasks=n_threads
             reducer=+
         end
+
         D_q = dynmat_q(ifc2, uc, q)
         freqs_sq, _ = get_modes(D_q, Val{is_gamma(q)}())
-        freqs = sqrt.(freqs_sq)
+        freqs_sq_real = clean_eigenvalue.(freqs_sq)
+        freqs = negsqrt.(freqs_sq_real)
 
         res_local = 0.0
         for freq in freqs

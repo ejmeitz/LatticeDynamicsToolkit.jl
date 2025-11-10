@@ -4,10 +4,10 @@ using TDEP_IFCs
 
 data_dir = abspath(joinpath(@__DIR__, "..", "data"))
 
-function load_sw_ifcs(ucposcar_path, T)
-    ifc2_path = joinpath(data_dir, "$(Int(T))K_3UC", "infile.forceconstant")
-    ifc3_path = joinpath(data_dir, "$(Int(T))K_3UC", "infile.forceconstant_thirdorder")
-    ifc4_path = joinpath(data_dir, "$(Int(T))K_3UC", "infile.forceconstant_fourthorder")
+function load_ifcs(basepath, ucposcar_path, T, N::Integer)
+    ifc2_path = joinpath(basepath, "$(Int(T))K_$(N)UC", "infile.forceconstant")
+    ifc3_path = joinpath(basepath, "$(Int(T))K_$(N)UC", "infile.forceconstant_thirdorder")
+    ifc4_path = joinpath(basepath, "$(Int(T))K_$(N)UC", "infile.forceconstant_fourthorder")
 
     ifc2 = read_ifc2(ifc2_path, ucposcar_path)
     ifc3 = read_ifc3(ifc3_path, ucposcar_path)
@@ -18,7 +18,8 @@ end
 
 @testset "IO" begin 
 
-    ucposcar_path = joinpath(data_dir, "infile.ucposcar")
+    basepath = joinpath(data_dir, "SW")
+    ucposcar_path = joinpath(basepath, "infile.ucposcar")
     x_frac_uc_file, L_uc_file = read_poscar_data(ucposcar_path)
 
     a = 5.43
@@ -33,16 +34,17 @@ end
     @test x_frac_uc ≈ x_frac_uc_file
     @test L_uc_file ≈ L_uc
 
-    ifc2, ifc3, ifc4 = load_sw_ifcs(ucposcar_path)
+    ifc2, ifc3, ifc4 = load_ifcs(basepath, ucposcar_path, 1300.0, 3)
 
 end
 
 @testset "Remap" begin
     
-    ucposcar_path = joinpath(data_dir, "infile.ucposcar")
-    ssposcar_path = joinpath(data_dir, "100K_5UC_remapped", "infile.ssposcar")
+    basepath = joinpath(data_dir, "SW")
+    ucposcar_path = joinpath(basepath, "infile.ucposcar")
+    ssposcar_path = joinpath(basepath, "100K_5UC_remapped", "infile.ssposcar")
 
-    ifc2, ifc3, ifc4 = load_sw_ifcs(ucposcar_path)
+    ifc2, ifc3, ifc4 = load_ifcs(basepath, ucposcar_path, 1300.0, 3)
 
     uc = CrystalStructure(ucposcar_path)
     sc = CrystalStructure(ssposcar_path)
@@ -52,8 +54,8 @@ end
     u = [@SVector rand(3) for i in 1:new_ifc2.na]
     println(TDEPToolkit.energies(u, new_ifc2; fc3 = new_ifc3))
 
-    ifc2_remapped_path = joinpath(data_dir, "100K_5UC_remapped", "outfile.forceconstant_remapped")
-    ifc3_remapped_path = joinpath(data_dir, "100K_5UC_remapped", "outfile.forceconstant_thirdorder_remapped")
+    ifc2_remapped_path = joinpath(basepath, "100K_5UC_remapped", "outfile.forceconstant_remapped")
+    ifc3_remapped_path = joinpath(basepath, "100K_5UC_remapped", "outfile.forceconstant_thirdorder_remapped")
 
     tdep_ifc2_remapped = read_ifc2(ifc2_remapped_path, ssposcar_path)
     tdep_ifc3_remapped = read_ifc3(ifc3_remapped_path, ssposcar_path)
@@ -65,11 +67,11 @@ end
 
 @testset "Energy Dataset" begin
     
-    data_dir = raw"C:\Users\ejmei\repos\TDEP_IFCs.jl\data"
-    ucposcar_path = joinpath(data_dir, "infile.ucposcar")
-    ssposcar_path = joinpath(data_dir, "100K_3UC", "infile.ssposcar")
+    basepath = joinpath(data_dir, "SW")
+    ucposcar_path = joinpath(basepath, "infile.ucposcar")
+    ssposcar_path = joinpath(basepath, "100K_3UC", "infile.ssposcar")
 
-    ifc2, ifc3, ifc4 = load_sw_ifcs(ucposcar_path)
+    ifc2, ifc3, ifc4 = load_ifcs(basepath, ucposcar_path, 1300.0, 3)
 
     uc = CrystalStructure(ucposcar_path)
     sc = CrystalStructure(ssposcar_path)
@@ -92,12 +94,12 @@ end
 #TODO TEST WITH THE 8 ATOM UNIT CELL TO VERIFY I GET SAME RESULTS
 @testset "Energy Calculator" begin
     
-    data_dir = raw"C:\Users\ejmei\repos\TDEP_IFCs.jl\data"
-    ucposcar_path = joinpath(data_dir, "infile.ucposcar")
-    ssposcar_path = joinpath(data_dir, "infile.ssposcar")
+    basepath = joinpath(data_dir, "SW")
+    ucposcar_path = joinpath(basepath, "infile.ucposcar")
+    ssposcar_path = joinpath(basepath, "infile.ssposcar")
 
     T = 1300.0
-    ifc2, ifc3, ifc4 = load_sw_ifcs(ucposcar_path, T)
+    ifc2, ifc3, ifc4 = load_ifcs(basepath, ucposcar_path, 1300.0, 3)
 
     uc = CrystalStructure(ucposcar_path)
     sc = CrystalStructure(ssposcar_path)
@@ -105,7 +107,7 @@ end
     n_configs = 100_000
     settings = ClassicalConfigSettings(n_configs, T)
 
-    sw_pot = joinpath(data_dir, "Si.sw")
+    sw_pot = joinpath(basepath, "Si.sw")
     pot_cmds = ["pair_style sw", "pair_coeff * * \"$(sw_pot)\" Si"]
 
     make_calc = (sc) -> LAMMPSCalculator(sc, pot_cmds)
@@ -118,6 +120,58 @@ end
         ifc2 = ifc2,
         ifc3 = ifc3,
         ifc4 = ifc4,
+    )
+
+end
+
+@testset "TI SW" begin
+    
+    basepath = joinpath(data_dir, "SW)")
+    ucposcar_path = joinpath(basepath, "infile.ucposcar")
+    ssposcar_path = joinpath(basepath, "infile.ssposcar")
+
+    T = 1300.0
+    ifc2, ifc3, ifc4 = load_ifcs(basepath, ucposcar_path, 1300.0, 3)
+
+    uc = CrystalStructure(ucposcar_path)
+    sc = CrystalStructure(ssposcar_path)
+
+    sw_pot = joinpath(basepath, "Si.sw")
+    pot_cmds = ["pair_style sw", "pair_coeff * * \"$(sw_pot)\" Si"]
+
+    nsteps = 50_000
+    nsteps_equil = 10_000
+    n_lambda = 15
+    settings = TISettings(T, pot_cmds, nsteps, nsteps_equil; n_lambda = n_lambda)
+
+    F = ThermodynmicIntegration(
+        ifc2, sc, uc, settings
+    )
+
+end
+
+@testset "TI LJ" begin
+    
+    # basepath = joinpath(data_dir, "LJ")
+    basepath = raw"C:\Users\ejmei\repos\TDEP_IFCs.jl\data\LJ"
+    ucposcar_path = joinpath(basepath, "infile.ucposcar")
+    ssposcar_path = joinpath(basepath, "infile.ssposcar")
+
+    T = 80.0
+    ifc2, ifc3, ifc4 = load_ifcs(basepath, ucposcar_path, T, 4)
+
+    uc = CrystalStructure(ucposcar_path)
+    sc = CrystalStructure(ssposcar_path)
+
+    pot_cmds = ["pair_style lj/cut 8.5", "pair_coeff * * 0.010423 3.4", "pair_modify shift yes"]
+
+    nsteps = 50_000
+    nsteps_equil = 10_000
+    n_lambda = 9
+    settings = TISettings(T, pot_cmds, nsteps, nsteps_equil; n_lambda = n_lambda)
+
+    F = ThermodynmicIntegration(
+        ifc2, sc, uc, settings
     )
 
 end
