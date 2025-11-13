@@ -8,8 +8,69 @@ sqnorm(v::AbstractVector) = dot(v, v)
 
 negsqrt(x::Real) = sign(x) * sqrt(abs(x))
 
-# Zeros out small complex parts
-# Converts large complex parts to negative real
+is_gamma(q) = sqnorm(q) < lo_sqtol
+
+
+ # Bose-Einstein distribution: n(ω,T) = 1/(exp(ℏω/k_B T) - 1)
+function planck(temperature::Float64, omega::Float64)
+   
+    if temperature < lo_temperaturetol
+        return 0.0
+    end
+    
+    if omega < lo_freqtol
+        return 0.0
+    end
+    
+    x = omega / (kB_Hartree * temperature)
+    
+    if x > 1e2
+        # Very large x → n ≈ 0 (avoid overflow)
+        return 0.0
+    else
+        return 1.0 / (exp(x) - 1.0)
+    end
+end
+
+
+# Temperature derivative of Bose-Einstein distribution: ∂n/∂T
+function planck_deriv(temperature::Float64, omega::Float64)
+    
+    if temperature < lo_temperaturetol
+        return 0.0
+    end
+    
+    if omega < lo_freqtol
+        return 0.0
+    end
+    
+    x = omega / (kB_Hartree * temperature)
+    n = planck(temperature, omega)
+    
+    return n * n * exp(x) * x / temperature
+end
+
+
+# Second temperature derivative of Bose-Einstein distribution: ∂²n/∂T²
+function planck_secondderiv(temperature::Float64, omega::Float64)
+
+    if temperature < lo_temperaturetol
+        return 0.0
+    end
+    
+    if omega < lo_freqtol
+        return 0.0
+    end
+    
+    x = omega / (kB_Hartree * temperature)
+    ex = exp(x)
+    
+    return (ex * x * (2 + ex * (-2 + x) + x)) / ((ex - 1)^3 * temperature^2)
+end
+
+"""
+Zeros out small complex parts, converts large complex parts to negative real number
+"""
 function clean_eigenvalue(freq_sq)
     if abs(imag(freq_sq)) > lo_sqtol
         return -abs(freq_sq)  # Mark as negative (imaginary freq)

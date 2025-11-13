@@ -1,16 +1,16 @@
 export DOS
 
-function DispersionData(
+function DispersionDataSimple(
         uc::CrystalStructure,
         ifc2::IFC2,
         mesh;
         n_threads::Integer = Threads.nthreads()
     )
     ibz = IBZMesh(uc, mesh)
-    return DispersionData(uc, ifc2, ibz; n_threads = n_threads)
+    return DispersionDataSimple(uc, ifc2, ibz; n_threads = n_threads)
 end
 
-function DispersionData(
+function DispersionDataSimple(
         uc::CrystalStructure,
         ifc2::IFC2,
         ibz::IBZMesh; 
@@ -52,8 +52,137 @@ function DispersionData(
         vel_buf[i] = group_velocities(freqs, phi, ∂D∂q)
     end
 
-    return DispersionData{3*na}(ibz, freq_buf, vel_buf)
+    return DispersionDataSimple{3*na}(ibz, freq_buf, vel_buf)
 
+end
+"""
+    PhononDispersions(uc, ifc2, fft_mesh; n_threads, smearing_prefactor)
+
+Construct PhononDispersions with dispersions on both irreducible and full q-meshes.
+
+This constructor computes phonon dispersions (frequencies, group velocities, and 
+eigenvectors) at all q-points in both the irreducible wedge and the full Brillouin zone.
+This is required for anharmonic free energy calculations.
+
+Uses the same functions as your existing DispersionDataSimple constructor:
+`dynmat_and_derivative_q!`, `get_modes`, `group_velocities`, `is_gamma`, 
+`clean_eigenvalue`, `negsqrt` (assumed to exist elsewhere).
+
+# Arguments
+- `uc::CrystalStructure`: Crystal structure
+- `ifc2::IFC2`: Second order force constants
+- `fft_mesh::FFTMesh`: FFT mesh (contains both IBZ and full mesh points)
+- `n_threads::Integer`: Number of threads for parallel computation (default: all threads)
+- `smearing_prefactor::Float64`: Prefactor for default smearing (default: 0.1)
+
+
+# Notes
+- The full mesh computation can be expensive for large meshes
+- Default smearing is computed as: `smearing_prefactor * mean(|velocity|)` per band
+- For acoustic modes with small velocities, uses frequency-based smearing instead
+"""
+function PhononDispersions(
+    uc::CrystalStructure,
+    ifc2::IFC2,
+    fft_mesh::FFTMesh;
+    n_threads::Integer = Threads.nthreads()
+)
+    
+    na = length(uc)
+    nb = 3 * na
+    n_irr = n_irr_point(fft_mesh)
+    n_full = n_full_q_point(fft_mesh)
+    
+    # Allocate arrays for irreducible points
+    iq = Vector{PhononDispersionPoint{nb}}(undef, n_irr)
+    
+    # Compute dispersions at irreducible q-points
+    @tasks for i in 1:n_irr
+        @set ntasks = n_threads
+        
+        @local begin
+            ix = zeros(Int, nb)
+            Dq = zeros(ComplexF64, nb, nb)
+            ∂D∂q = zeros(ComplexF64, nb, nb, 3)
+        end
+        
+        fill!(Dq, 0.0)
+        fill!(∂D∂q, zero(ComplexF64))
+        
+        q_frac = fft_mesh.k_ibz[i]
+        dynmat_and_derivative_q!(Dq, ∂D∂q, ifc2, uc, q_frac)
+        freqs_sq, phi = get_modes(Hermitian(Dq), Val{is_gamma(q_frac)}())
+        freqs_sq_real = clean_eigenvalue.(freqs_sq)
+        freqs = negsqrt.(freqs_sq_real)
+        
+        # Sort by frequency
+        sortperm!(ix, freqs)
+        omega = SVector{nb, Float64}(freqs[ix])
+        egv_sorted = phi[:, ix]
+        vels = group_velocities(freqs[ix], egv_sorted, ∂D∂q)
+        
+        # Store as PhononDispersionPoint
+        iq[i] = PhononDispersionPoint{nb}(
+            omega,
+            SMatrix{3, nb, Float64}(vels),
+            SMatrix{nb, nb, ComplexF64}(egv_sorted)
+        )
+    end
+    
+    # Allocate arrays for full mesh
+    aq = Vector{PhononDispersionPoint{nb}}(undef, n_full)
+    
+    # Compute dispersions at all full q-points
+    @tasks for i in 1:n_full
+        @set ntasks = n_threads
+        
+        @local begin
+            ix = zeros(Int, nb)
+            Dq = zeros(ComplexF64, nb, nb)
+            ∂D∂q = zeros(ComplexF64, nb, nb, 3)
+        end
+        
+        fill!(Dq, 0.0)
+        fill!(∂D∂q, zero(ComplexF64))
+        
+        q_frac = fft_mesh.k_full[i].r
+        dynmat_and_derivative_q!(Dq, ∂D∂q, ifc2, uc, q_frac)
+        freqs_sq, phi = get_modes(Hermitian(Dq), Val{is_gamma(q_frac)}())
+        freqs_sq_real = clean_eigenvalue.(freqs_sq)
+        freqs = negsqrt.(freqs_sq_real)
+        
+        # Sort by frequency
+        sortperm!(ix, freqs)
+        omega = SVector{nb, Float64}(freqs[ix])
+        egv_sorted = phi[:, ix]
+        vels = group_velocities(freqs[ix], egv_sorted, ∂D∂q)
+        
+        # Store as PhononDispersionPoint
+        aq[i] = PhononDispersionPoint{nb}(
+            omega,
+            SMatrix{3, nb, Float64}(vels),
+            SMatrix{nb, nb, ComplexF64}(egv_sorted)
+        )
+    end
+    
+    # Compute default smearing per band using frequency differences
+    # Same approach as _default_smearing for DispersionDataSimple
+    default_smearing = zeros(Float64, nb)
+    for b in 1:nb
+        f = 0.0
+        freqs_band = [iq[i].omega[b] for i in 1:n_irr]
+        sort!(freqs_band)
+        for i in 1:(n_irr - 1)
+            f = max(f, abs(freqs_band[i+1] - freqs_band[i]))
+        end
+        default_smearing[b] = f
+    end
+    
+    # Help avoid issues when there are flat bands
+    f = maximum(default_smearing) / 5.0
+    default_smearing = max.(default_smearing, Ref(f))
+    
+    return PhononDispersions{nb}(nb, iq, aq, default_smearing)
 end
 
 function DOS(
@@ -91,7 +220,7 @@ function DOS(
     na = length(uc)
     Nk = length(k_ibz) 
 
-    dd = DispersionData(uc, ifc2, ibz; n_threads = n_threads)
+    dd = DispersionDataSimple(uc, ifc2, ibz; n_threads = n_threads)
 
     # -------- Build ω grid and Gaussian width --------
     max_freq = maximum(maximum.(dd.freqs))
@@ -147,7 +276,6 @@ end
 """
     group_velocities(ω², U, ∂D∂q)
 
-Faithful port of the TDEP group-velocity computation.
 
 Inputs
 ---------
@@ -262,7 +390,7 @@ function find_degenerate_subspaces(ω::AbstractVector{<:Real})
     return subspaces, has_deg
 end
 
-function _default_smearing(dd::DispersionData{N_BRANCH}) where N_BRANCH
+function _default_smearing(dd::DispersionDataSimple{N_BRANCH}) where N_BRANCH
     
     n_q_point = length(dd.freqs)
     σs = zeros(Float64, N_BRANCH)

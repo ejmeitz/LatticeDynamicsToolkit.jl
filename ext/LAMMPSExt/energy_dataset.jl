@@ -80,7 +80,7 @@ function _canonical_configs_V!(
 
     phi_view_T = transpose(phi_view)
     atom_masses_T = transpose(atom_masses)
-    mean_amplitude_matrix = mean_amplitude.(Ref(CM), freqs_view, atom_masses_T) # D*N_atoms - D x D*N_atoms
+    mean_amplitude_matrix = LatticeDynamicsToolkit.mean_amplitude.(Ref(CM), freqs_view, atom_masses_T) # D*N_atoms - D x D*N_atoms
 
     # Pre-scale modes by their amplitudes
     phi_A = phi_view_T .* mean_amplitude_matrix # D*N_atoms x D*N_atoms - D

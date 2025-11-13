@@ -139,9 +139,9 @@ end
     sw_pot = joinpath(basepath, "Si.sw")
     pot_cmds = ["pair_style sw", "pair_coeff * * \"$(sw_pot)\" Si"]
 
-    nsteps = 50_000
-    nsteps_equil = 10_000
-    n_lambda = 15
+    nsteps = 150_000
+    nsteps_equil = 50_000
+    n_lambda = 9
     settings = TISettings(T, pot_cmds, nsteps, nsteps_equil; n_lambda = n_lambda)
 
     F = ThermodynmicIntegration(
@@ -165,8 +165,8 @@ end
 
     pot_cmds = ["pair_style lj/cut 8.5", "pair_coeff * * 0.010423 3.4", "pair_modify shift yes"]
 
-    nsteps = 50_000
-    nsteps_equil = 10_000
+    nsteps = 150_000
+    nsteps_equil = 50_000
     n_lambda = 9
     settings = TISettings(T, pot_cmds, nsteps, nsteps_equil; n_lambda = n_lambda)
 

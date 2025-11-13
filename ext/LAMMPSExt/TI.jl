@@ -172,7 +172,7 @@ end
 
 
 # IGNORES POLAR INTERACTIONS
-# returns free energy in eV
+# returns harmonic free energy and ΔF in eV / atom
 function LatticeDynamicsToolkit.ThermodynmicIntegration(
         ifc2_uc::IFC2,
         sc::CrystalStructure,
@@ -180,6 +180,7 @@ function LatticeDynamicsToolkit.ThermodynmicIntegration(
         s::TISettings;
         n_threads::Integer = Threads.nthreads(),
         V₀::Float64 = 0.0,
+        k_mesh = [35, 35, 35],
         kwargs...
     )
 
@@ -223,14 +224,14 @@ function LatticeDynamicsToolkit.ThermodynmicIntegration(
 
     finish!(p)
 
-    @info "Calculating harmonic free energy on 30x30x30 mesh"
+    @info "Calculating harmonic free energy on 35x35x35 mesh"
 
     # This F0 is per atom
     F₀, _, _, _ = harmonic_properties(
         s.T, 
         uc,
         ifc2_uc,
-        [30,30,30],
+        k_mesh,
         Classical;
         n_threads = n_threads
     )

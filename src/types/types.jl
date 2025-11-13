@@ -2,8 +2,8 @@ export
     IFC2, IFC3, IFC4,
     CrystalStructure, ConfigSettings,
     ClassicalConfigSettings, QuantumConfigSettings,
-    LAMMPSCalculator, ThermodynmicIntegration, TISettings,
     Quantum, Classical, Limit
+    
 
 abstract type IFCs end
 
@@ -203,81 +203,6 @@ AtomsBase.atomic_number(s::CrystalStructure, i::Union{Integer, AbstractVector}) 
 
 ######################
 
-# Gamma centered IBZ mesh
-struct IBZMesh{I <: Integer}
-    mesh::SVector{3, I}
-    k_ibz::Vector{SVector{3, Float64}}
-    weights::Vector{Float64}
-    radius::Float64 # no integration weight included
-    n_atoms_prim::Integer
-end
-
-
-n_full_q_point(ibz::IBZMesh) = prod(ibz.mesh)
-Base.length(ibz::IBZMesh) = length(ibz.k_ibz)
-Base.eachindex(ibz::IBZMesh) = eachindex(ibz.weights)
-
-# Add IBZ constructor from Spglib using the types defined here
-function Spglib.BrillouinZoneMesh(uc::CrystalStructure, mesh; symprec = 1e-5)
-
-    cell = Spglib.SpglibCell(
-        uc.L,
-        uc.x_frac,
-        Int.(AtomsBase.atomic_number(uc, :))
-    )
-
-    return Spglib.get_ir_reciprocal_mesh(cell, mesh, symprec)
-end
-
-function IBZMesh(uc::CrystalStructure, mesh; symprec = 1e-5)
-
-    bzm = Spglib.BrillouinZoneMesh(uc, mesh; symprec = symprec)
-    
-    N = length(bzm.grid_address)
-
-    # Indices of irreducible k-points (sorted for stable downstream use)
-    ir_idx = sort!(unique(bzm.ir_mapping_table))
-
-    if length(ir_idx) > 0.5 * length(bzm.grid_address)
-        @warn "The number of irreducible k-points ($(length(ir_idx))) is more than half the total number of k-points ($(length(bzm.grid_address)))." *
-              " This may indicate that the symmetry detection failed. Consider increasing symprec (currently $(symprec))."
-    end
-
-    counts = zeros(Int, N)
-    @inbounds for i in 1:N
-        j = bzm.ir_mapping_table[i]
-        counts[j] += 1
-    end
-    multiplicity = counts[ir_idx]
-
-    # Get list of fractional IBZ points
-    invmesh = 1.0 ./ Float64.(bzm.mesh)
-    k_ibz = Vector{SVector{3,Float64}}(undef, length(ir_idx))
-    @inbounds for (p, j) in pairs(ir_idx)
-        k_ibz[p] = (Float64.(bzm.grid_address[j])) .* invmesh
-    end
-
-    weights = multiplicity ./ sum(multiplicity)
-
-    @assert length(k_ibz) == length(weights) "something wrong in IBZMesh construction"
-
-    # cbrt(3 / (4*pi*V*Nk))
-    radius = cbrt(3.0/primitive_volume(uc)/prod(mesh)/4.0/pi)
-
-    N_prim = n_atoms_primitive(uc)
-
-    return IBZMesh(bzm.mesh, k_ibz, weights, radius, N_prim)
-end
-
-######################
-
-struct DispersionData{N} # N = N branch
-    ibz::IBZMesh
-    freqs::Vector{SVector{N, Float64}}  # each entry sorted smallest --> largest
-    vels::Vector{SMatrix{3, N, Float64}} # Length is Nq
-end 
-
-# Constructor in dispersion.jl
 
 ######################
 
@@ -298,70 +223,4 @@ end
 const QuantumConfigSettings = ConfigSettings{Quantum}
 const ClassicalConfigSettings = ConfigSettings{Classical}
 
-######################
 
-"""
-    LAMMPSCalculator(
-        sys::CrystalStructure,
-        potential_definition::Union{String, Array{String}};
-        label_type_map::Dict{Symbol, Int} = Dict{Symbol, Int}(),
-        logfile_path::String = "none",
-    )
-
-Defines a general interaction that will call LAMMPS to calculate forces and energies. Forces
-and energies are calculated on a single thread. You must call LAMMPS.MPI.Init() for LAMMPS.jl
-to load the LAMMPS executable on systems where MPI is available. To speed-up single point
-calculations the neighbor list skin distance is set to the nearest-neighbor distance in the system
-and never rebuilt.
-
-The LAMMPS potential files can be found at:
-`abspath(dirname(LAMMPS.locate()), "..", "share", "lammps", "potentials")`
-
-Restrictions:
--------------
-- CPU only
-- Floats promote to Float64
-- No triclinic boundary
-- 3D systems only
-- Fully periodic systems only
-- Expects 'metal' unit system
-- Only crystals
-
-Arguments:
-----------
-- `sys::CrystalStructure`: The system object this interaction will be applied to. 
-- `potential_definition::Union{String, Array{String}}` : Commands passed to lammps which define your interaction.
-    For example, to define LJ you pass:
-    `lj_cmds = ["pair_style lj/cut 8.5", "pair_coeff * * 0.0104 3.4", "pair_modify shift yes"]`
-- `label_type_map::Dict{Symbol, Int} = Dict{Symbol, Int}()` : By default atom types are assigned in the 
-    order they appear in the system. This can make defining the potential for multi-atomic systems
-    difficult. By providing this dictionary you can overide the type label assigned to each unique species. 
-- `logfile_path::String = "none"` : Path where LAMMPS logfile is written. Defaults to no log file. 
-"""
-mutable struct LAMMPSCalculator{T, S}
-    lmp::T # T will be LMP but that is not available here
-    pot_cmds::S # S will be String or Vector{String}
-end
-
-
-"""
-TODO
-"""
-struct TISettings 
-    T::Float64
-    pot_cmds::Union{String, Vector{String}}
-    nsteps::Integer
-    nsteps_equil::Integer
-    n_lambda::Integer
-    dt_ps::Float64
-    T_damp::Float64
-end
-
-function TISettings(T, pot_cmds, nsteps, nsteps_equil; n_lambda = 9, dt_ps = 1e-3, T_damp = 100*dt_ps)
-    return TISettings(T, pot_cmds, nsteps, nsteps_equil, n_lambda, dt_ps, T_damp)
-end
-
-"""
-TODO
-"""
-function ThermodynmicIntegration end

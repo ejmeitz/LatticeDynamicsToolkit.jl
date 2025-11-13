@@ -3,13 +3,8 @@ export
     canonical_configs_and_velocities, 
     canonical_velocities
     
-function bose_einstein(freq, temp)
-    x =  freq / (kB_Hartree * temp)
-    return 1 / (exp(x) - 1)
-end
-
 function mean_amplitude(qc::QuantumConfigSettings, freq, mass)
-    nᵢ = bose_einstein(freq, qc.temperature)
+    nᵢ = planck(qc.temperature, freq)
     return sqrt((2*nᵢ + 1) / (2 * mass * freq))
 end
 

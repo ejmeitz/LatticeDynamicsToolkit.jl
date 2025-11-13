@@ -3,6 +3,7 @@ const periodic_table = PeriodicTable.elements
 const lo_tol = 1e-5
 const lo_sqtol = lo_tol^2
 const lo_freqtol = lo_tol*1e-4
+const lo_temperaturetol = 1e-3
 
 # Energy
 const Hartree_to_eV = 27.21138602

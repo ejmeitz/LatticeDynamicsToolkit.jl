@@ -5,7 +5,6 @@ export
 #! probably some speed to be gained by using SMatrix for dynmats
 
 q_cart_from_frac(cell::CrystalStructure, q_frac::SVector{3,Float64}) = 2pi .* (cell.L_inv' * q_frac)
-is_gamma(q) = sqnorm(q) < lo_sqtol
 
 function check_hermetian(D, nb; name = "Dynamical matrix")
     c0 = 0.0
