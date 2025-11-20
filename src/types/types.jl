@@ -10,8 +10,8 @@ abstract type IFCs end
 # mimics the lo_fc2_pair type
 struct FC2Data 
     idxs::SVector{2, Int} # indices in unitcell
-    lvs::SVector{2, SVector{3, Float64}} # lattice vectors for the unit cell these atoms belong to
-    r::SVector{3, Float64} # vector between atom 1 and 2
+    lvs::SVector{2, SVector{3, Float64}} # cartesian lattice vectors for the unit cell these atoms belong to
+    r::SVector{3, Float64} # cartesian vector between atom 1 and 2
     n2::SVector{3,Int16} # image flags for each atom, n1 is always zero vector
     ifcs::SMatrix{3, 3, Float64, 9}
 end 

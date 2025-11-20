@@ -9,7 +9,7 @@ function harmonic_properties(
         n_threads::Integer = Threads.nthreads()
     ) where {L <: Limit}
 
-    ibz = IBZMesh(uc, mesh)
+    ibz = SimpleMesh(uc, mesh)
     
     F₀ = sum_over_freqs(
         (ω) -> F_harmonic_single(ω, kB_Hartree*T, L), 
@@ -85,14 +85,14 @@ function sum_over_freqs(
 
     @assert length(uc) == ifc2.na "Failed summing over freqs. IFCs build on $(ifc2.na) cell, but unitcell has $(length(uc)) atoms"
 
-    ibz = IBZMesh(uc, mesh)
+    ibz = SimpleMesh(uc, mesh)
 
     return sum_over_freqs(f, ibz, uc, ifc2, n_threads = n_threads)
 end
 
 function sum_over_freqs(
         f, 
-        ibz::IBZMesh,
+        ibz::SimpleMesh,
         uc::CrystalStructure,
         ifc2::IFC2;
         n_threads::Integer = Threads.nthreads()

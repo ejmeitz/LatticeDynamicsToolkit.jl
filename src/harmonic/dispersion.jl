@@ -6,14 +6,14 @@ function DispersionDataSimple(
         mesh;
         n_threads::Integer = Threads.nthreads()
     )
-    ibz = IBZMesh(uc, mesh)
+    ibz = SimpleMesh(uc, mesh)
     return DispersionDataSimple(uc, ifc2, ibz; n_threads = n_threads)
 end
 
 function DispersionDataSimple(
         uc::CrystalStructure,
         ifc2::IFC2,
-        ibz::IBZMesh; 
+        ibz::SimpleMesh; 
         n_threads::Integer = Threads.nthreads()
     )
 
@@ -194,7 +194,7 @@ function DOS(
         sigma_scale::Float64 = 1.0
     )
 
-    ibz = IBZMesh(uc, mesh)
+    ibz = SimpleMesh(uc, mesh)
     return DOS(
                 uc, ifc2, ibz; 
                 n_threads = n_threads,
@@ -206,7 +206,7 @@ end
 function DOS(
         uc::CrystalStructure,
         ifc2::IFC2,
-        ibz::IBZMesh;
+        ibz::SimpleMesh;
         n_threads::Integer = Threads.nthreads(),
         n_bins::Integer = 500,
         sigma_scale::Float64 = 1.0

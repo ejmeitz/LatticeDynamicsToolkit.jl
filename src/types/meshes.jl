@@ -1,5 +1,5 @@
 export 
-    AbstractQMesh, IBZMesh, FFTMesh, QPointFull,
+    AbstractQMesh, SimpleMesh, FFTMesh, QPointFull,
     fft_third_grid_index, fft_fourth_grid_index,
     n_full_q_point, n_irr_point
 
@@ -8,7 +8,7 @@ abstract type AbstractQMesh{I <: Integer} end
 
 # Lightweight IBZ mesh - just irreducible points
 # Good for: band structures, DOS, properties that only need IBZ
-struct IBZMesh{I <: Integer} <: AbstractQMesh{I}
+struct SimpleMesh{I <: Integer} <: AbstractQMesh{I}
     mesh::SVector{3, I}
     k_ibz::Vector{SVector{3, Float64}}
     weights::Vector{Float64}
@@ -39,7 +39,7 @@ end
 n_full_q_point(mesh::AbstractQMesh) = prod(mesh.mesh)
 n_irr_point(mesh::AbstractQMesh) = length(mesh.k_ibz)
 Base.length(mesh::AbstractQMesh) = length(mesh.k_ibz)
-Base.eachindex(mesh::IBZMesh) = eachindex(mesh.weights)
+Base.eachindex(mesh::SimpleMesh) = eachindex(mesh.weights)
 Base.eachindex(mesh::FFTMesh) = eachindex(mesh.weights_ibz)
 
 # Add IBZ constructor from Spglib using the types defined here
@@ -83,7 +83,7 @@ function _build_ibz_mesh(uc::CrystalStructure, mesh; symprec = 1e-5)
 
     weights = multiplicity ./ sum(multiplicity)
 
-    @assert length(k_ibz) == length(weights) "something wrong in IBZMesh construction"
+    @assert length(k_ibz) == length(weights) "something wrong in SimpleMesh construction"
 
     # cbrt(3 / (4*pi*V*Nk))
     radius = cbrt(3.0/primitive_volume(uc)/prod(mesh)/4.0/pi)
@@ -93,21 +93,21 @@ function _build_ibz_mesh(uc::CrystalStructure, mesh; symprec = 1e-5)
     return bzm, k_ibz, weights, radius, N_prim
 end
 
-function IBZMesh(uc::CrystalStructure, mesh; symprec = 1e-5)
+function SimpleMesh(uc::CrystalStructure, mesh; symprec = 1e-5)
     bzm, k_ibz, weights, radius, N_prim = _build_ibz_mesh(uc, mesh; symprec = symprec)
-    return IBZMesh(bzm.mesh, k_ibz, weights, radius, N_prim)
+    return SimpleMesh(bzm.mesh, k_ibz, weights, radius, N_prim)
 end
 
 """
-    FFTMesh(ibz::IBZMesh, bzm::Spglib.BrillouinZoneMesh)
+    FFTMesh(ibz::SimpleMesh, bzm::Spglib.BrillouinZoneMesh)
 
-Construct an FFTMesh from an IBZMesh by expanding to the full Brillouin zone.
+Construct an FFTMesh from an SimpleMesh by expanding to the full Brillouin zone.
 Requires the original Spglib.BrillouinZoneMesh object for the full mesh mapping.
 """
 function FFTMesh(uc::CrystalStructure, mesh; symprec = 1e-5)
 
     bzm, k_ibz, weights, radius, N_prim = _build_ibz_mesh(uc, mesh; symprec = symprec)
-    ibz = IBZMesh(bzm.mesh, k_ibz, weights, radius, N_prim)
+    ibz = SimpleMesh(bzm.mesh, k_ibz, weights, radius, N_prim)
 
     Nx, Ny, Nz = ibz.mesh
     N_full = Nx * Ny * Nz
@@ -236,7 +236,7 @@ end
 # Smaller version of dispersion data that
 # does not have eigenvector or full q-grid info
 struct DispersionDataSimple{N} # N = N branch
-    ibz::IBZMesh
+    ibz::SimpleMesh
     freqs::Vector{SVector{N, Float64}}  # each entry sorted smallest --> largest
     vels::Vector{SMatrix{3, N, Float64}} # Length is Nq
 end 
@@ -252,8 +252,8 @@ Phonon data at a single q-point. N = number of modes (3 * n_atoms).
 """
 struct PhononDispersionPoint{N}
     omega::SVector{N, Float64}  # frequencies (angular, atomic units)
-    vel::SMatrix{3, N, Float64, 3N}  # group velocities
-    egv::SMatrix{N, N, ComplexF64, N*N}  # eigenvectors (column b is mode b)
+    vel::SMatrix{3, N, Float64}  # group velocities
+    egv::SMatrix{N, N, ComplexF64}  # eigenvectors (column b is mode b)
 end
 
 """
