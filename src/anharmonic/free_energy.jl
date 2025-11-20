@@ -1,4 +1,4 @@
-
+export free_energy_corrections
 
 function free_energy_corrections(
         T::Float64,
@@ -16,14 +16,42 @@ function free_energy_corrections(
         error(ArgumentError("Not all IFCs are built from the unitcell you passed which has $(length(uc)) atoms."))
     end
 
-    k_mesh = FFTMesh(uc, mesh)
+    # probably overkill to make both but this is
+    # easier to code and way faster than the O(N^3)
+    # thing we're about to calculate
+    k_mesh_frac = FFTMesh(uc, mesh; store_cart = false)
+    k_mesh_cart = FFTMesh(uc, mesh; store_cart = true)
 
-    pd = PhononDispersions(uc, ifc2, k_mesh; n_threads = n_threads)
+    pd = PhononDispersions(uc, ifc2, k_mesh_frac; n_threads = n_threads)
+
+    # Precompute planck derivatives on IBZ and full mesh
+    p_ibz, p_all = precompute_planck_data(k_mesh_cart, pd, T, n_threads)
 
     # First order correction is <V4>
-    F4, S4, Cv4 = free_energy_fourthorder(uc, ifc4, k_mesh, pd, T, quantum; n_threads = n_threads)
-    # Second order correction is <V3*V3>
-    F3, S3, Cv3 = free_energy_thirdorder(uc, ifc3, k_mesh, pd, T, quantum; n_threads = n_threads)
+    F4, S4, Cv4 = free_energy_fourthorder(
+                    uc,
+                    ifc4,
+                    k_mesh_cart,
+                    pd,
+                    p_ibz,
+                    p_all,
+                    T,
+                    quantum;
+                    n_threads = n_threads
+                )
+
+    # # Second order correction is <V3*V3>
+    F3, S3, Cv3 = free_energy_thirdorder(
+                    uc,
+                    ifc3,
+                    k_mesh_cart,
+                    pd,
+                    p_ibz,
+                    p_all,
+                    T,
+                    quantum;
+                    n_threads = n_threads
+                )
 
     # F = U - TS
     U3 = (F3 + (T*S3)) * Hartree_to_eV
@@ -40,6 +68,47 @@ function free_energy_corrections(
 
     return (F3 = F3, F4 = F4, S3 = S3, S4 = S4, U3 = U3, U4 = U4, Cv3 = Cv3, Cv4 = Cv4)
 
+end
+
+struct PlanckData
+    n::Array{Float64}
+    dn::Array{Float64}
+    ddn::Array{Float64}
+end
+
+function precompute_planck_data(qp::FFTMesh, pd::PhononDispersions, T, n_threads)
+
+    n_mode = pd.n_mode
+    n_irr = n_irr_point(qp)
+    n_full = n_full_q_point(qp)
+
+    n_iq = zeros(n_irr, n_mode)
+    dn_iq = zeros(n_irr, n_mode)
+    ddn_iq = zeros(n_irr, n_mode)
+    @tasks for q in 1:n_irr
+        @set ntasks=n_threads
+        for b in 1:n_mode
+            ω = pd.iq[q].omega[b]
+            n_iq[q, b] = planck(T, ω)
+            dn_iq[q, b] = planck_deriv(T, ω)
+            ddn_iq[q, b] = planck_secondderiv(T, ω)
+        end
+    end
+
+    n_aq = zeros(n_full, n_mode)
+    dn_aq = zeros(n_full, n_mode)
+    ddn_aq = zeros(n_full, n_mode)
+    @tasks for q in 1:n_full
+        @set ntasks=n_threads
+        for b in 1:n_mode
+            ω = pd.aq[q].omega[b]
+            n_aq[q, b] = planck(T, ω)
+            dn_aq[q, b] = planck_deriv(T, ω)
+            ddn_aq[q, b] = planck_secondderiv(T, ω)
+        end
+    end
+
+    return PlanckData(n_iq, dn_iq, ddn_iq), PlanckData(n_aq, dn_aq, ddn_aq)
 end
 
 """
@@ -64,8 +133,10 @@ Calculate the second order contribution to free energy, entropy, and heat capaci
 function free_energy_thirdorder(
     uc::CrystalStructure,
     fct::IFC3,
-    qp::FFTMesh,
+    qp::CartesianFFTMesh,
     pd::PhononDispersions,
+    p_i::PlanckData,
+    p_a::PlanckData,
     temperature::Float64,
     quantum::Bool;
     n_threads::Integer = Threads.nthreads()
@@ -85,13 +156,14 @@ function free_energy_thirdorder(
     end
     
     Ω = (2pi)^3 / volume(uc)
+    one_im = ComplexF64(1.0, 0.0)
     
     # Main loop over irreducible and full q-points
     p = Progress(n_irr, "Second Order Correction")
     (f3, s3, cv3) = @tasks for q1 in 1:n_irr
 
         @set ntasks = n_threads
-        @set reducer = .+
+        @set reducer = +
 
         @local begin
             ptf = zeros(ComplexF64, n_mode^3)
@@ -102,7 +174,7 @@ function free_energy_thirdorder(
             egv3 = zeros(ComplexF64, n_mode)
         end
 
-        f3_, s3_, cv3_ = 0.0, 0.0, 0.0
+        res = [0.0, 0.0, 0.0] # f3, s3, cv3
 
         for q2 in 1:n_full
             # Find q3 such that q1 + q2 + q3 = 0
@@ -120,8 +192,8 @@ function free_energy_thirdorder(
             # Pre-transform the matrix element
             ptf .= pretransform_phi3(
                     fct, 
-                    q_cart_from_frac(uc, qp.k_full[q2].r), #! ALLOCATION
-                    q_cart_from_frac(uc, qp.k_full[q3].r), #! ALLOCATION
+                    qp.k_full[q2].r,
+                    qp.k_full[q3].r,
                     uc
                 )
             
@@ -130,9 +202,9 @@ function free_energy_thirdorder(
                 ω1 = pd.iq[q1].omega[b1]
                 ω1 < lo_freqtol && continue
 
-                n1 = planck(temperature, ω1)
-                dn1 = planck_deriv(temperature, ω1)
-                ddn1 = planck_secondderiv(temperature, ω1)
+                n1 = p_i.n[q1, b1]
+                dn1 = p_i.dn[q1, b1]
+                ddn1 = p_i.ddn[q1, b1]
                 egv1 .= view(pd.iq[q1].egv, :, b1) ./ sqrt(ω1)
                 
                 for b2 in 1:n_mode
@@ -140,32 +212,32 @@ function free_energy_thirdorder(
                     ω2 = pd.aq[q2].omega[b2]
                     ω2 < lo_freqtol && continue
 
-                    n2 = planck(temperature, ω2)
-                    dn2 = planck_deriv(temperature, ω2)
-                    ddn2 = planck_secondderiv(temperature, ω2)
+                    n2 = p_a.n[q2, b2]
+                    dn2 = p_a.dn[q2, b2]
+                    ddn2 = p_a.ddn[q2, b2]
                     egv2 .= view(pd.aq[q2].egv, :, b2) ./ sqrt(ω2)
                     
                     # Outer product: evp1 = egv2 * egv1^T
                     # zgeru(n_mode, n_mode, 1.0, egv2, 1, egv1, 1, evp1, n_mode)
                     fill!(evp1, 0.0)
                     evp1_mat = reshape(evp1, n_mode, n_mode)
-                    LinearAlgebra.BLAS.geru!(1.0 + 0.0im, egv2, egv1, evp1_mat)
+                    BLAS.geru!(one_im, egv2, egv1, evp1_mat)
                     
                     for b3 in 1:n_mode
                         # Get third phonon
                         ω3 = pd.aq[q3].omega[b3]
                         ω3 < lo_freqtol && continue
 
-                        n3 = planck(temperature, ω3)
-                        dn3 = planck_deriv(temperature, ω3)
-                        ddn3 = planck_secondderiv(temperature, ω3)
+                        n3 = p_a.n[q3, b3]
+                        dn3 = p_a.dn[q3, b3]
+                        ddn3 = p_a.ddn[q3, b3]
                         egv3 .= view(pd.aq[q3].egv, :, b3) ./ sqrt(ω3)
                         
                         # Project on third phonon: evp2 = egv3 * evp1^T
                         # zgeru(n_mode, n_mode^2, 1.0, egv3, 1, evp1, 1, evp2, n_mode)
                         fill!(evp2, 0.0)
                         evp2_mat = reshape(evp2, n_mode, n_mode^2)
-                        BLAS.geru!(1.0 + 0.0im, egv3, evp1, evp2_mat)
+                        BLAS.geru!(one_im, egv3, evp1, evp2_mat)
                         evp2 .= conj.(evp2)
                         
                         # Compute the scattering matrix element
@@ -213,15 +285,15 @@ function free_energy_thirdorder(
                         end
                         
                         # Accumulate
-                        f3_ -= f0 * psisq
-                        s3_ += df0 * psisq
-                        cv3_ += ddf0 * psisq
+                        res[1] -= f0 * psisq
+                        res[2] += df0 * psisq
+                        res[3] += ddf0 * psisq
                     end
                 end
             end
         end
         next!(p)
-        (f3_, s3_, cv3_) # the thing reduced
+        res # the thing reduced
     end
     finish!(p)
 
@@ -251,8 +323,10 @@ This is the first type (diagonal in q-space).
 function free_energy_fourthorder(
     uc::CrystalStructure,
     fcf::IFC4,
-    qp::FFTMesh,
+    qp::CartesianFFTMesh,
     pd::PhononDispersions,
+    p_i::PlanckData,
+    p_a::PlanckData,
     temperature::Float64,
     quantum::Bool;
     n_threads::Integer = Threads.nthreads()
@@ -263,10 +337,11 @@ function free_energy_fourthorder(
     n_full = n_full_q_point(qp)   
 
     Ω = (2pi)^3 / volume(uc)
+    one_im = ComplexF64(1.0, 0.0)
     
     # Main loop
     p = Progress(n_irr, desc = "First Order Correction")
-    (df4, s4, cv4) = @tasks for q1 in 1:n_irr
+    (f4, s4, cv4) = @tasks for q1 in 1:n_irr
         @set ntasks = n_threads
         @set reducer = .+
 
@@ -279,7 +354,8 @@ function free_energy_fourthorder(
             egv2 = zeros(ComplexF64, n_mode)
         end
 
-        df4_, s4_, cv4_ = 0, 0, 0
+        # res = [0.0, 0.0, 0.0] # f4, s4, cv4
+        f4_ = 0.0; s4_ = 0.0; cv4_ = 0.0
 
         for q2 in 1:n_full
             # Prefactor
@@ -288,8 +364,8 @@ function free_energy_fourthorder(
             # Pre-transform the matrix element
             ptf .= pretransform_phi4(
                         fcf, 
-                        q_cart_from_frac(uc, qp.k_ibz[q1]), #! ALLOCATION
-                        q_cart_from_frac(uc, qp.k_full[q2].r), #! ALLOCATION
+                        qp.k_ibz[q1],
+                        qp.k_full[q2].r,
                         uc
                     )
             
@@ -310,31 +386,30 @@ function free_energy_fourthorder(
                     # evp1 = egv1 * conj(egv1)^T
                     fill!(evp1, 0.0)
                     evp1_mat = reshape(evp1, n_mode, n_mode)
-                    BLAS.ger!(1.0 + 0.0im, egv1, egv1, evp1_mat)
+                    BLAS.ger!(one_im, egv1, egv1, evp1_mat)
                     
                     # zgerc(n_mode, n_mode, 1.0, egv2, 1, egv2, 1, evp2, n_mode)
-                    # evp2 = egv2 * conj(egv2)^T (uses first n_mode^2 elements of evp2)
+                    # evp2 = egv2 * conj(egv2)^T
                     fill!(evp2, 0.0)
                     evp2_mat = reshape(evp2, n_mode, n_mode)
-                    BLAS.ger!(1.0 + 0.0im, egv2, egv2, evp2_mat)
+                    BLAS.ger!(one_im, egv2, egv2, evp2_mat)
                     
                     # zgeru(n_mode^2, n_mode^2, 1.0, evp2, 1, evp1, 1, evp3, n_mode^2)
-                    # Treat evp2 and evp1 as vectors and do outer product
                     fill!(evp3, 0.0)
                     evp3_mat = reshape(evp3, n_mode^2, n_mode^2)
-                    BLAS.geru!(1.0 + 0.0im, vec(evp2), evp1, evp3_mat)
+                    BLAS.geru!(one_im, vec(evp2), evp1, evp3_mat)
                     evp3 .= conj.(evp3)
                     
                     psisq = real(dot(evp3, ptf))
                     
                     if quantum
-                        n1 = planck(temperature, ω1)
-                        n2 = planck(temperature, ω2)
-                        dn1 = planck_deriv(temperature, ω1)
-                        dn2 = planck_deriv(temperature, ω2)
-                        ddn1 = planck_secondderiv(temperature, ω1)
-                        ddn2 = planck_secondderiv(temperature, ω2)
-                        
+                        n1 = p_i.n[q1, b1]
+                        dn1 = p_i.dn[q1, b1]
+                        ddn1 = p_i.ddn[q1, b1]
+                        n2 = p_a.n[q2, b2]
+                        dn2 = p_a.dn[q2, b2]
+                        ddn2 = p_a.ddn[q2, b2]
+
                         # Free energy
                         f0 = (2.0 * n1 + 1.0) * (2.0 * n2 + 1.0) * psisq * prefactor / 32.0
                         # Entropy
@@ -351,18 +426,18 @@ function free_energy_fourthorder(
                     end
                     
                     # Accumulate
-                    df4_ += f0 * psisq * prefactor
+                    f4_ += f0 * psisq * prefactor
                     s4_ -= df0 * psisq * prefactor
                     cv4_ -= ddf0 * psisq * prefactor
                 end
             end
         end
         next!(p)
-        (df4_, s4_, cv4_) # the thing to be reduced 
+        (f4_, s4_, cv4_) # the thing to be reduced 
     end
     finish!(p)
     
-    return df4, s4, cv4
+    return f4, s4, cv4
 end
 
 """
@@ -394,7 +469,6 @@ function pretransform_phi3(
             rv3 = trip.rv3
             
             iqr = -dot(q2_cart, rv2) - dot(q3_cart, rv3)
-            # iqr = -iqr * (2π) # 2pi already from conv to
             expiqr = cis(iqr)  # exp(i*iqr)
             
             for i in 1:3, j in 1:3, k in 1:3
@@ -430,22 +504,20 @@ function pretransform_phi4(
     ptf = zeros(ComplexF64, nb^4)
     
     for a1 in 1:fcf.na
-        quartets = get_interactions(fcf, a1)
         m1 = uc.invsqrtm[a1]
-        for quart in quartets
-            a2 = quart.idxs[2]
-            a3 = quart.idxs[3]
-            a4 = quart.idxs[4]
+        for quartet in get_interactions(fcf, a1)
+            a2 = quartet.idxs[2]
+            a3 = quartet.idxs[3]
+            a4 = quartet.idxs[4]
 
             #! SHOULD PROBABLY PRE-MASS WEIGHT THE IFCs
             m_factor = m1 * uc.invsqrtm[a2] * uc.invsqrtm[a3] * uc.invsqrtm[a4]
             
-            rv2 = quart.rv2
-            rv3 = quart.rv3
-            rv4 = quart.rv4
+            rv2 = quartet.rv2
+            rv3 = quartet.rv3
+            rv4 = quartet.rv4
             
             iqr = -dot(q1_cart, rv2) + dot(q2_cart, rv3) - dot(q2_cart, rv4)
-            # iqr = iqr * (2*π) # 2pi factor from conversion to q_cart
             expiqr = cis(iqr)
             
             for l in 1:3, k in 1:3, j in 1:3, i in 1:3
@@ -455,7 +527,7 @@ function pretransform_phi4(
                 id = (a4 - 1) * 3 + l
                 # Flattening scheme consistent with zgeru operations
                 m = (ia - 1) * nb^3 + (ib - 1) * nb^2 + (ic - 1) * nb + id
-                ptf[m] += quart.ifcs[i, j, k, l] * expiqr * (m_factor)
+                ptf[m] += quartet.ifcs[i, j, k, l] * expiqr * (m_factor)
             end
         end
     end

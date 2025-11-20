@@ -84,7 +84,7 @@ Uses the same functions as your existing DispersionDataSimple constructor:
 function PhononDispersions(
     uc::CrystalStructure,
     ifc2::IFC2,
-    fft_mesh::FFTMesh;
+    fft_mesh::FractionalFFTMesh;
     n_threads::Integer = Threads.nthreads()
 )
     

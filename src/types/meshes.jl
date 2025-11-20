@@ -3,12 +3,12 @@ export
     fft_third_grid_index, fft_fourth_grid_index,
     n_full_q_point, n_irr_point
 
-# Abstract q-mesh type
-abstract type AbstractQMesh{I <: Integer} end
+# Abstract q-mesh type, F = wavevectors are fractional
+abstract type AbstractQMesh{F, I <: Integer} end
 
 # Lightweight IBZ mesh - just irreducible points
 # Good for: band structures, DOS, properties that only need IBZ
-struct SimpleMesh{I <: Integer} <: AbstractQMesh{I}
+struct SimpleMesh{I <: Integer} <: AbstractQMesh{true, I}
     mesh::SVector{3, I}
     k_ibz::Vector{SVector{3, Float64}}
     weights::Vector{Float64}
@@ -25,7 +25,7 @@ end
 
 # FFT mesh with full BZ data - needed for anharmonic calculations
 # Has both irreducible points AND full mesh for momentum conservation
-struct FFTMesh{I <: Integer} <: AbstractQMesh{I}
+struct FFTMesh{F, I <: Integer} <: AbstractQMesh{F, I}
     mesh::SVector{3, I}  # grid dimensions (Nx, Ny, Nz)
     k_ibz::Vector{SVector{3, Float64}}  # irreducible points
     weights_ibz::Vector{Float64}  # integration weights for IBZ points
@@ -34,6 +34,9 @@ struct FFTMesh{I <: Integer} <: AbstractQMesh{I}
     radius::Float64
     n_atoms_prim::Int
 end
+
+const CartesianFFTMesh{I} = FFTMesh{false, I}
+const FractionalFFTMesh{I} = FFTMesh{true, I}
 
 # Common interface for both mesh types
 n_full_q_point(mesh::AbstractQMesh) = prod(mesh.mesh)
@@ -104,7 +107,7 @@ end
 Construct an FFTMesh from an SimpleMesh by expanding to the full Brillouin zone.
 Requires the original Spglib.BrillouinZoneMesh object for the full mesh mapping.
 """
-function FFTMesh(uc::CrystalStructure, mesh; symprec = 1e-5)
+function FFTMesh(uc::CrystalStructure, mesh; symprec = 1e-5, store_cart::Bool = false)
 
     bzm, k_ibz, weights, radius, N_prim = _build_ibz_mesh(uc, mesh; symprec = symprec)
     ibz = SimpleMesh(bzm.mesh, k_ibz, weights, radius, N_prim)
@@ -134,15 +137,25 @@ function FFTMesh(uc::CrystalStructure, mesh; symprec = 1e-5)
         ir_idx = bzm.ir_mapping_table[full_idx]
         ibz_idx = ir_to_ibz[ir_idx]
         weight = 1.0 / N_full  # uniform weight for full mesh points
-        k_full[full_idx] = QPointFull(k, weight, ibz_idx)
+        if store_cart
+            k_full[full_idx] = QPointFull(q_cart_from_frac(uc, k), weight, ibz_idx)
+        else
+            k_full[full_idx] = QPointFull(k, weight, ibz_idx)
+        end
     end
     
     # Find which full index each IBZ point corresponds to
     full_index_ibz = [ir_to_full[ir_sorted[i]] for i in 1:length(ir_sorted)]
+
+    # Convert IBZ points to cartesian
+    ibz_pts = ibz.k_ibz
+    if store_cart
+        ibz_pts = [q_cart_from_frac(uc, ki) for ki in ibz.k_ibz]
+    end
     
-    return FFTMesh(
+    return FFTMesh{!store_cart, eltype(mesh)}(
         ibz.mesh, 
-        ibz.k_ibz, 
+        ibz_pts, 
         ibz.weights, 
         full_index_ibz,
         k_full, 

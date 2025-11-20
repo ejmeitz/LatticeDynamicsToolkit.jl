@@ -6,6 +6,7 @@ export
 
 q_cart_from_frac(cell::CrystalStructure, q_frac::SVector{3,Float64}) = 2pi .* (cell.L_inv' * q_frac)
 
+
 function check_hermetian(D, nb; name = "Dynamical matrix")
     c0 = 0.0
     for i in 1:nb
