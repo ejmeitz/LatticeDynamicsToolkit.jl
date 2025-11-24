@@ -25,5 +25,5 @@ LAMMPSExt = "LAMMPS"
 [compat]
 AtomsBase = "0.5.2"
 AtomsCalculators = "0.2.3"
-LAMMPS = "0.9"
+LAMMPS = "0.10"
 Spglib = "1.0.1"
