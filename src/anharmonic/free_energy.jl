@@ -190,12 +190,13 @@ function free_energy_thirdorder(
             prefactor = Ω * qp.weights_ibz[q1] * qp.k_full[q2].weight * mult / length(uc)
             
             # Pre-transform the matrix element
-            ptf .= pretransform_phi3(
-                    fct, 
-                    qp.k_full[q2].r,
-                    qp.k_full[q3].r,
-                    uc
-                )
+            pretransform_phi3!(
+                ptf,
+                fct, 
+                qp.k_full[q2].r,
+                qp.k_full[q3].r,
+                uc
+            )
             
             for b1 in 1:n_mode
                 # Get first phonon
@@ -354,6 +355,10 @@ function free_energy_fourthorder(
             egv2 = zeros(ComplexF64, n_mode)
         end
 
+        evp1_mat = reshape(evp1, n_mode, n_mode)
+        evp2_mat = reshape(evp2, n_mode, n_mode)
+        evp3_mat = reshape(evp3, n_mode^2, n_mode^2)
+
         # res = [0.0, 0.0, 0.0] # f4, s4, cv4
         f4_ = 0.0; s4_ = 0.0; cv4_ = 0.0
 
@@ -361,19 +366,25 @@ function free_energy_fourthorder(
             # Prefactor
             prefactor = Ω * qp.weights_ibz[q1] * qp.k_full[q2].weight / length(uc)
             
-            # Pre-transform the matrix element
-            ptf .= pretransform_phi4(
-                        fcf, 
-                        qp.k_ibz[q1],
-                        qp.k_full[q2].r,
-                        uc
-                    )
-            
+            pretransform_phi4!(
+                ptf,
+                fcf, 
+                qp.k_ibz[q1],
+                qp.k_full[q2].r,
+                uc
+            )
+        
             for b1 in 1:n_mode
                 ω1 = pd.iq[q1].omega[b1]
                 ω1 < lo_freqtol && continue
                 
                 egv1 .= view(pd.iq[q1].egv, :, b1) ./ sqrt(ω1)
+
+                # Outer products matching BLAS calls
+                # zgerc(n_mode, n_mode, 1.0, egv1, 1, egv1, 1, evp1, n_mode)
+                # evp1 = egv1 * conj(egv1)^T
+                fill!(evp1, 0.0)
+                BLAS.ger!(one_im, egv1, egv1, evp1_mat)
                 
                 for b2 in 1:n_mode
                     ω2 = pd.aq[q2].omega[b2]
@@ -381,23 +392,14 @@ function free_energy_fourthorder(
                     
                     egv2 .= view(pd.aq[q2].egv, :, b2) ./ sqrt(ω2)
                     
-                    # Outer products matching BLAS calls
-                    # zgerc(n_mode, n_mode, 1.0, egv1, 1, egv1, 1, evp1, n_mode)
-                    # evp1 = egv1 * conj(egv1)^T
-                    fill!(evp1, 0.0)
-                    evp1_mat = reshape(evp1, n_mode, n_mode)
-                    BLAS.ger!(one_im, egv1, egv1, evp1_mat)
-                    
                     # zgerc(n_mode, n_mode, 1.0, egv2, 1, egv2, 1, evp2, n_mode)
                     # evp2 = egv2 * conj(egv2)^T
                     fill!(evp2, 0.0)
-                    evp2_mat = reshape(evp2, n_mode, n_mode)
                     BLAS.ger!(one_im, egv2, egv2, evp2_mat)
                     
                     # zgeru(n_mode^2, n_mode^2, 1.0, evp2, 1, evp1, 1, evp3, n_mode^2)
                     fill!(evp3, 0.0)
-                    evp3_mat = reshape(evp3, n_mode^2, n_mode^2)
-                    BLAS.geru!(one_im, vec(evp2), evp1, evp3_mat)
+                    BLAS.geru!(one_im, evp2, evp1, evp3_mat)
                     evp3 .= conj.(evp3)
                     
                     psisq = real(dot(evp3, ptf))
@@ -411,6 +413,7 @@ function free_energy_fourthorder(
                         ddn2 = p_a.ddn[q2, b2]
 
                         # Free energy
+                        #! SHOULD THIS PSISQ BE HERE??? ALREADY MULTIPLIED LATER
                         f0 = (2.0 * n1 + 1.0) * (2.0 * n2 + 1.0) * psisq * prefactor / 32.0
                         # Entropy
                         df0 = 2.0 * dn1 * (2.0 * n2 + 1.0) + (2.0 * n1 + 1.0) * 2.0 * dn2
@@ -446,7 +449,8 @@ end
 Get the Fourier transform of the third order matrix element.
 Returns flattened, pretransformed matrix element.
 """
-function pretransform_phi3(
+function pretransform_phi3!(
+        ptf::Vector{ComplexF64},
         fct::IFC3,
         q2_cart::SVector{3, Float64},
         q3_cart::SVector{3, Float64},
@@ -454,7 +458,7 @@ function pretransform_phi3(
     )
 
     nb = fct.na * 3
-    ptf = zeros(ComplexF64, nb^3)
+    fill!(ptf, zero(ComplexF64))
     
     for a1 in 1:fct.na
         triplets = get_interactions(fct, a1)
@@ -493,7 +497,8 @@ Returns flattened, pretransformed matrix element.
 
 This is a faithful port of the Fortran subroutine from fourthorder.f90.
 """
-function pretransform_phi4(
+function pretransform_phi4!(
+        ptf::Vector{ComplexF64},
         fcf::IFC4,
         q1_cart::SVector{3, Float64},
         q2_cart::SVector{3, Float64},
@@ -501,7 +506,7 @@ function pretransform_phi4(
     )
     
     nb = fcf.na * 3
-    ptf = zeros(ComplexF64, nb^4)
+    fill!(ptf, zero(ComplexF64))
     
     for a1 in 1:fcf.na
         m1 = uc.invsqrtm[a1]
