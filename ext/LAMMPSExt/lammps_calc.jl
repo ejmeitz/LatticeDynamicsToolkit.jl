@@ -22,7 +22,7 @@ function LatticeDynamicsToolkit.LAMMPSCalculator(
     end
 
     if LAMMPS.MPI.Initialized()
-        if MPI.Query_thread() != MPI.ThreadLevel(3)
+        if LAMMPS.MPI.Query_thread() != LAMMPS.MPI.ThreadLevel(3)
             error("MPI was initialized somewhere else without threadlevel=:multiple. Cannot continue.")
         end
     else
