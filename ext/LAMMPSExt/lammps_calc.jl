@@ -21,7 +21,13 @@ function LatticeDynamicsToolkit.LAMMPSCalculator(
         error(ArgumentError("Currently only 'metal' unit system is supported by LAMMPSCalculator"))
     end
 
-    LAMMPS.MPI.Initialized() || LAMMPS.MPI.Init(threadlevel=:multiple)
+    if LAMMPS.MPI.Initialized()
+        if MPI.Query_thread() != MPI.ThreadLevel(3)
+            error("MPI was initialized somewhere else without threadlevel=:multiple. Cannot continue.")
+        end
+    else
+        LAMMPS.MPI.Init(threadlevel=:multiple)
+    end
     lmp = LMP(["-screen","none"], LAMMPS.MPI.COMM_WORLD)
 
     all_syms = AtomsBase.atomic_symbol(sys, :)
