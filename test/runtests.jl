@@ -126,7 +126,8 @@ end
 
 @testset "TI SW" begin
     
-    basepath = joinpath(data_dir, "SW)")
+    # basepath = joinpath(data_dir, "SW)")
+    basepath = raw"C:\Users\ejmei\repos\TDEP_IFCs.jl\data\SW"
     ucposcar_path = joinpath(basepath, "infile.ucposcar")
     ssposcar_path = joinpath(basepath, "infile.ssposcar")
 

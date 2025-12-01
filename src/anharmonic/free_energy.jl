@@ -16,22 +16,18 @@ function free_energy_corrections(
         error(ArgumentError("Not all IFCs are built from the unitcell you passed which has $(length(uc)) atoms."))
     end
 
-    # probably overkill to make both but this is
-    # easier to code and way faster than the O(N^3)
-    # thing we're about to calculate
-    k_mesh_frac = FFTMesh(uc, mesh; store_cart = false)
-    k_mesh_cart = FFTMesh(uc, mesh; store_cart = true)
+    k_mesh_frac = FFTMesh(uc, mesh)
 
     pd = PhononDispersions(uc, ifc2, k_mesh_frac; n_threads = n_threads)
 
     # Precompute planck derivatives on IBZ and full mesh
-    p_ibz, p_all = precompute_planck_data(k_mesh_cart, pd, T, n_threads)
+    p_ibz, p_all = precompute_planck_data(k_mesh_frac, pd, T, n_threads)
 
     # First order correction is <V4>
     F4, S4, Cv4 = free_energy_fourthorder(
                     uc,
                     ifc4,
-                    k_mesh_cart,
+                    k_mesh_frac,
                     pd,
                     p_ibz,
                     p_all,
@@ -44,7 +40,7 @@ function free_energy_corrections(
     F3, S3, Cv3 = free_energy_thirdorder(
                     uc,
                     ifc3,
-                    k_mesh_cart,
+                    k_mesh_frac,
                     pd,
                     p_ibz,
                     p_all,
@@ -133,7 +129,7 @@ Calculate the second order contribution to free energy, entropy, and heat capaci
 function free_energy_thirdorder(
     uc::CrystalStructure,
     fct::IFC3,
-    qp::CartesianFFTMesh,
+    qp::FractionalFFTMesh,
     pd::PhononDispersions,
     p_i::PlanckData,
     p_a::PlanckData,
@@ -155,7 +151,7 @@ function free_energy_thirdorder(
         end
     end
     
-    Ω = (2pi)^3 / volume(uc)
+    # Ω = (2pi)^3 / volume(uc)
     one_im = ComplexF64(1.0, 0.0)
     
     # Main loop over irreducible and full q-points
@@ -172,29 +168,37 @@ function free_energy_thirdorder(
             egv1 = zeros(ComplexF64, n_mode)
             egv2 = zeros(ComplexF64, n_mode)
             egv3 = zeros(ComplexF64, n_mode)
+            q2_full_cart = @MVector zeros(Float64, 3)
+            q3_full_cart = @MVector zeros(Float64, 3)
         end
 
         res = [0.0, 0.0, 0.0] # f3, s3, cv3
 
         for q2 in 1:n_full
+            q2_full_cart .= q_cart_from_frac(uc, qp.k_full[q2].r)
+
             # Find q3 such that q1 + q2 + q3 = 0
             q3 = fft_third_grid_index(qp.full_index_ibz[q1], q2, dims)
             
             # Skip if q3 < q2 (permutation symmetry)
             q3 < q2 && continue
 
+            # Convert q-vector to cartesian
+            q3_full_cart .= q_cart_from_frac(uc, qp.k_full[q3].r)
+
+
             # Multiplicity factor
             mult = (q2 == q3) ? 1.0 : 2.0
             
             # Prefactor including integration weights
-            prefactor = Ω * qp.weights_ibz[q1] * qp.k_full[q2].weight * mult / length(uc)
+            prefactor = qp.weights_ibz[q1] * qp.k_full[q2].weight * mult / length(uc)
             
             # Pre-transform the matrix element
             pretransform_phi3!(
                 ptf,
                 fct, 
-                qp.k_full[q2].r,
-                qp.k_full[q3].r,
+                q2_full_cart,
+                q3_full_cart,
                 uc
             )
             
@@ -324,7 +328,7 @@ This is the first type (diagonal in q-space).
 function free_energy_fourthorder(
     uc::CrystalStructure,
     fcf::IFC4,
-    qp::CartesianFFTMesh,
+    qp::FractionalFFTMesh,
     pd::PhononDispersions,
     p_i::PlanckData,
     p_a::PlanckData,
@@ -337,7 +341,7 @@ function free_energy_fourthorder(
     n_irr = n_irr_point(qp)
     n_full = n_full_q_point(qp)   
 
-    Ω = (2pi)^3 / volume(uc)
+    # Ω = (2pi)^3 / volume(uc)
     one_im = ComplexF64(1.0, 0.0)
     
     # Main loop
@@ -353,6 +357,8 @@ function free_energy_fourthorder(
             evp3 = zeros(ComplexF64, n_mode^4)
             egv1 = zeros(ComplexF64, n_mode)
             egv2 = zeros(ComplexF64, n_mode)
+            q1_ibz_cart = @MVector zeros(Float64, 3)
+            q2_full_cart = @MVector zeros(Float64, 3)
         end
 
         evp1_mat = reshape(evp1, n_mode, n_mode)
@@ -362,15 +368,20 @@ function free_energy_fourthorder(
         # res = [0.0, 0.0, 0.0] # f4, s4, cv4
         f4_ = 0.0; s4_ = 0.0; cv4_ = 0.0
 
+        q1_ibz_cart .= q_cart_from_frac(uc, qp.k_ibz[q1])
+
         for q2 in 1:n_full
+
+            q2_full_cart .= q_cart_from_frac(uc, qp.k_full[q2].r)
+
             # Prefactor
-            prefactor = Ω * qp.weights_ibz[q1] * qp.k_full[q2].weight / length(uc)
+            prefactor = qp.weights_ibz[q1] * qp.k_full[q2].weight / length(uc)
             
             pretransform_phi4!(
                 ptf,
                 fcf, 
-                qp.k_ibz[q1],
-                qp.k_full[q2].r,
+                q1_ibz_cart,
+                q2_full_cart,
                 uc
             )
         
@@ -452,10 +463,10 @@ Returns flattened, pretransformed matrix element.
 function pretransform_phi3!(
         ptf::Vector{ComplexF64},
         fct::IFC3,
-        q2_cart::SVector{3, Float64},
-        q3_cart::SVector{3, Float64},
+        q2_cart::S,
+        q3_cart::S,
         uc::CrystalStructure
-    )
+    ) where {S <: StaticVector{3, Float64}}
 
     nb = fct.na * 3
     fill!(ptf, zero(ComplexF64))
@@ -500,10 +511,10 @@ This is a faithful port of the Fortran subroutine from fourthorder.f90.
 function pretransform_phi4!(
         ptf::Vector{ComplexF64},
         fcf::IFC4,
-        q1_cart::SVector{3, Float64},
-        q2_cart::SVector{3, Float64},
+        q1_cart::S,
+        q2_cart::S,
         uc::CrystalStructure
-    )
+    ) where {S <: StaticVector{3, Float64}}
     
     nb = fcf.na * 3
     fill!(ptf, zero(ComplexF64))
