@@ -139,6 +139,8 @@ function free_energy_thirdorder(
 )
     
     n_mode = pd.n_mode
+    nb = n_mode
+    nb2 = nb * nb
     n_irr = n_irr_point(qp)
     n_full = n_full_q_point(qp)
     dims = Tuple(qp.mesh)
@@ -245,10 +247,16 @@ function free_energy_thirdorder(
                         BLAS.geru!(one_im, egv3, evp1, evp2_mat)
                         evp2 .= conj.(evp2)
                         
-                        # Compute the scattering matrix element
-                        c0 = dot(evp2, ptf)
+                        # This is just dot product in a weird order to match
+                        # the indexing scheme used in the pre-transform
+                        evp2_3d = reshape(evp2, nb, nb, nb)  # (i3, i2, i1)
+                        c0 = 0.0 + 0.0im
+                        @inbounds for i1 in 1:nb, i2 in 1:nb, i3 in 1:nb
+                            m = (i1 - 1) * nb2 + (i2 - 1) * nb + i3  # ptf index (i1, i2, i3)
+                            c0 += evp2_3d[i3, i2, i1] * ptf[m]
+                        end
                         psisq = abs2(c0) * prefactor
-                        
+
                         if quantum
                             # Get smearing parameter
                             sig1 = sigsq[q1, b1]
@@ -338,6 +346,9 @@ function free_energy_fourthorder(
 )
     
     n_mode = pd.n_mode
+    nb = n_mode
+    nb2 = n_mode^2
+    nb3 = n_mode^3
     n_irr = n_irr_point(qp)
     n_full = n_full_q_point(qp)   
 
@@ -365,7 +376,6 @@ function free_energy_fourthorder(
         evp2_mat = reshape(evp2, n_mode, n_mode)
         evp3_mat = reshape(evp3, n_mode^2, n_mode^2)
 
-        # res = [0.0, 0.0, 0.0] # f4, s4, cv4
         f4_ = 0.0; s4_ = 0.0; cv4_ = 0.0
 
         q1_ibz_cart .= q_cart_from_frac(uc, qp.k_ibz[q1])
@@ -412,9 +422,17 @@ function free_energy_fourthorder(
                     fill!(evp3, 0.0)
                     BLAS.geru!(one_im, evp2, evp1, evp3_mat)
                     evp3 .= conj.(evp3)
-                    
-                    psisq = real(dot(evp3, ptf))
-                    
+
+                    # This is just dot product in a weird order to match
+                    # the indexing scheme used in the pre-transform
+                    evp3_4d = reshape(evp3, n_mode, n_mode, n_mode, n_mode)  # no allocation
+                    psisq = 0.0
+                    @inbounds for j1 in 1:nb, i1 in 1:nb, j2 in 1:nb, i2 in 1:nb
+                        # ptf expects indices in order (j1, i1, j2, i2)
+                        m = (j1 - 1) * nb3 + (i1 - 1) * nb2 + (j2 - 1) * nb + i2
+                        psisq += real(evp3_4d[i2, j2, i1, j1] * ptf[m])
+                    end
+                                        
                     if quantum
                         n1 = p_i.n[q1, b1]
                         dn1 = p_i.dn[q1, b1]
@@ -424,8 +442,7 @@ function free_energy_fourthorder(
                         ddn2 = p_a.ddn[q2, b2]
 
                         # Free energy
-                        #! SHOULD THIS PSISQ BE HERE??? ALREADY MULTIPLIED LATER
-                        f0 = (2.0 * n1 + 1.0) * (2.0 * n2 + 1.0) * psisq * prefactor / 32.0
+                        f0 = (2.0 * n1 + 1.0) * (2.0 * n2 + 1.0) / 32.0
                         # Entropy
                         df0 = 2.0 * dn1 * (2.0 * n2 + 1.0) + (2.0 * n1 + 1.0) * 2.0 * dn2
                         df0 = df0 / 32.0
@@ -438,7 +455,7 @@ function free_energy_fourthorder(
                         df0 = kB_Hartree^2 * temperature / (ω1 * ω2) / 4.0
                         ddf0 = kB_Hartree^2 * temperature / (ω1 * ω2) / 4.0
                     end
-                    
+
                     # Accumulate
                     f4_ += f0 * psisq * prefactor
                     s4_ -= df0 * psisq * prefactor
@@ -449,8 +466,9 @@ function free_energy_fourthorder(
         next!(p)
         (f4_, s4_, cv4_) # the thing to be reduced 
     end
-    finish!(p)
-    
+    finish!(p)  
+
+
     return f4, s4, cv4
 end
 
@@ -480,10 +498,11 @@ function pretransform_phi3!(
 
             m_factor = m1 * uc.invsqrtm[a2] * uc.invsqrtm[a3]
             
-            rv2 = trip.rv2
-            rv3 = trip.rv3
+            # Use cell offsets (lvs), NOT relative position vectors (rv)
+            lv2 = trip.lvs[2]
+            lv3 = trip.lvs[3]
             
-            iqr = -dot(q2_cart, rv2) - dot(q3_cart, rv3)
+            iqr = -dot(q2_cart, lv2) - dot(q3_cart, lv3)
             expiqr = cis(iqr)  # exp(i*iqr)
             
             for i in 1:3, j in 1:3, k in 1:3
@@ -529,11 +548,9 @@ function pretransform_phi4!(
             #! SHOULD PROBABLY PRE-MASS WEIGHT THE IFCs
             m_factor = m1 * uc.invsqrtm[a2] * uc.invsqrtm[a3] * uc.invsqrtm[a4]
             
-            rv2 = quartet.rv2
-            rv3 = quartet.rv3
-            rv4 = quartet.rv4
-            
-            iqr = -dot(q1_cart, rv2) + dot(q2_cart, rv3) - dot(q2_cart, rv4)
+            iqr = -dot(q1_cart, quartet.lvs[2]) +
+                   dot(q2_cart, quartet.lvs[3]) -
+                   dot(q2_cart, quartet.lvs[4])
             expiqr = cis(iqr)
             
             for l in 1:3, k in 1:3, j in 1:3, i in 1:3

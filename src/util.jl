@@ -90,8 +90,8 @@ end
 
 @inline function chop(x::ComplexF64, tol::Float64)
     re = real(x); im = imag(x)
-    if abs(re) < tol; re = zero(T); end
-    if abs(im) < tol; im = zero(T); end
+    if abs(re) < tol; re = 0.0; end
+    if abs(im) < tol; im = 0.0; end
     return ComplexF64(re, im)
 end
 
@@ -273,4 +273,36 @@ Behavior mirrors the Fortran `lo_clean_fractional_coordinates`:
             return y
         end
     end
+end
+
+
+"""
+    gram_schmidt!(X)
+
+Apply Gram-Schmidt orthogonalization to columns of complex matrix X.
+"""
+function gram_schmidt!(X::AbstractMatrix{ComplexF64})
+    nr, nc = size(X)
+    Q = copy(X)
+    
+    for k in 1:nc
+        for i in 1:(k-1)
+            Q_i = view(Q, :, i)
+            Q_k = view(Q, :, k)
+            R_ik = dot(Q_i, Q_k)  # conjugate dot product
+            Q[:, k] .-= R_ik .* Q_i
+        end
+        R_kk = @views sqrt(real(dot(Q[:, k], Q[:, k])))
+        if abs(R_kk) > lo_sqtol
+            Q[:, k] ./= R_kk
+        else
+            Q[:, k] .= 0.0
+        end
+    end
+    
+    # Chop small values (matching lo_chop behavior)
+    chop!(Q, 1e-13)
+    X .= Q
+
+    return X
 end
