@@ -90,6 +90,12 @@ function _canonical_configs_V!(
     # LAMMPSCalculator only supports metal units
     x_cart_eq_ang = copy(sc.x_cart) .* bohr_to_A
 
+    # Make LAMMPSCalculator for each thread
+    chnl = Channel{LAMMPSCalculator}(nbuffers)
+    foreach(1:nbuffers) do _
+        put!(chnl, make_calc(sc))
+    end
+
     p = Progress(CM.n_configs; desc="Calculating Energies", dt = 0.25, color = :magenta)
     @tasks for n in 1:CM.n_configs
         @set begin
@@ -100,8 +106,10 @@ function _canonical_configs_V!(
             tmp = zeros(size(phi_A))
             coord_storage = zeros(D*N_atoms)
             randn_storage = zeros(D*N_atoms - D)
-            calc = make_calc(sc)
+            # calc = make_calc(sc)
         end
+
+        calc = take!(chnl)
 
         randn!(randn_storage)
         copy!(tmp, phi_A)
@@ -119,6 +127,7 @@ function _canonical_configs_V!(
         cs .+= x_cart_eq_ang
         V[n] = single_point_potential_energy(cs, calc)
 
+        put!(chnl, calc)
         next!(p)
     end
     finish!(p)

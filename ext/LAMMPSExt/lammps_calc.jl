@@ -28,7 +28,7 @@ function LatticeDynamicsToolkit.LAMMPSCalculator(
     else
         LAMMPS.MPI.Init(threadlevel=:multiple)
     end
-    lmp = LMP(["-screen","none"], LAMMPS.MPI.COMM_WORLD)
+    lmp = LMP(["-screen","none"], LAMMPS.MPI.COMM_SELF)
 
     all_syms = AtomsBase.atomic_symbol(sys, :)
     unique_syms = unique(all_syms)
