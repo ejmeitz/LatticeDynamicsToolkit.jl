@@ -91,8 +91,8 @@ function _canonical_configs_V!(
     x_cart_eq_ang = copy(sc.x_cart) .* bohr_to_A
 
     # Make LAMMPSCalculator for each thread
-    chnl = Channel{LAMMPSCalculator}(nbuffers)
-    foreach(1:nbuffers) do _
+    chnl = Channel{LAMMPSCalculator}(n_threads)
+    foreach(1:n_threads) do _
         put!(chnl, make_calc(sc))
     end
 
