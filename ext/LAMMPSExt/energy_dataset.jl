@@ -106,7 +106,6 @@ function _canonical_configs_V!(
             tmp = zeros(size(phi_A))
             coord_storage = zeros(D*N_atoms)
             randn_storage = zeros(D*N_atoms - D)
-            # calc = make_calc(sc)
         end
 
         calc = take!(chnl)
