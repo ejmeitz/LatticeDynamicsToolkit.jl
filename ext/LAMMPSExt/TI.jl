@@ -215,11 +215,19 @@ function LatticeDynamicsToolkit.ThermodynmicIntegration(
         dt = 0.5,
     )
 
+    # Make LAMMPSCalculator for each thread
+    # Do this in main task to avoid race-conditions
+    chnl = Channel{LAMMPSCalculator}(n_threads)
+    foreach(1:n_threads) do _
+        put!(chnl, LAMMPSCalculator(sc, s.pot_cmds; single_point = false, kwargs...))
+    end
+
     #! is there a way to ensure each lammps calculator only has one core?
     @tasks for (i,λ) in collect(enumerate(λs))
         @set ntasks = n_threads
-        @local lc = LAMMPSCalculator(sc, s.pot_cmds; single_point = false, kwargs...)
+        lc = take!(chnl)
         integrands[i] = _TI_step(lc, s, ifc2_lmp, x0_ang, λ, V₀, p)
+        put!(chnl, calc)
     end
 
     finish!(p)
