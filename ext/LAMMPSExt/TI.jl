@@ -227,7 +227,7 @@ function LatticeDynamicsToolkit.ThermodynmicIntegration(
         @set ntasks = n_threads
         lc = take!(chnl)
         integrands[i] = _TI_step(lc, s, ifc2_lmp, x0_ang, λ, V₀, p)
-        put!(chnl, calc)
+        put!(chnl, lc)
     end
 
     finish!(p)
