@@ -1,12 +1,17 @@
-export IFC2, IFC3, IFC4, CrystalStructure, ClassicalConfigSettings, QuantumConfigSettings
+export 
+    IFC2, IFC3, IFC4,
+    CrystalStructure, ConfigSettings,
+    ClassicalConfigSettings, QuantumConfigSettings,
+    Quantum, Classical, Limit
+    
 
 abstract type IFCs end
 
 # mimics the lo_fc2_pair type
 struct FC2Data 
     idxs::SVector{2, Int} # indices in unitcell
-    lvs::SVector{2, SVector{3, Float64}} # lattice vectors for the unit cell these atoms belong to
-    r::SVector{3, Float64} # vector between atom 1 and 2
+    lvs::SVector{2, SVector{3, Float64}} # cartesian lattice vectors for the unit cell these atoms belong to
+    r::SVector{3, Float64} # cartesian vector between atom 1 and 2
     n2::SVector{3,Int16} # image flags for each atom, n1 is always zero vector
     ifcs::SMatrix{3, 3, Float64, 9}
 end 
@@ -96,26 +101,24 @@ end
 
 ##############################
 
-# Could make this an AtomsBase compatible type
-struct CrystalStructure
+struct CrystalStructure <: AbstractSystem{3}
     x_frac::Vector{SVector{3,Float64}}
     x_cart::Vector{SVector{3,Float64}} # bohr
     species::Vector{Symbol}
     m::Vector{Float64} # in emu
     invsqrtm::Vector{Float64} # 1/sqrt(m)
     L::SMatrix{3,3,Float64,9} # bohr
-    L_inv::SMatrix{3,3,Float64,9} 
+    L_inv::SMatrix{3,3,Float64,9}
+    sym_data::Spglib.Dataset
 end
 
-Base.length(cs::CrystalStructure) = length(cs.x_frac)
 
 """
+    CrystalStructure(poscar_path::String)
 
-Parameters:
------------
 - `poscar_path::String` : Path to POSCAR file to parse, only fractional coords supported
 """
-function CrystalStructure(poscar_path::String) 
+function CrystalStructure(poscar_path::String; symprec::Float64 = 1e-5) 
 
     species, x_frac, cell = read_poscar_data(poscar_path)
 
@@ -135,20 +138,89 @@ function CrystalStructure(poscar_path::String)
     m = ustrip.([periodic_table[s].atomic_mass for s in species]) .* amu_to_emu 
     invsqrtm = 1.0 ./ sqrt.(m)
 
-    return CrystalStructure(x_frac, x_cart, species, m, invsqrtm, cell, cell_inv)
+    spglib_cell = Spglib.SpglibCell(
+        cell,
+        x_frac,
+        atomic_number.(species)
+    )
+
+    sym_data = Spglib.get_dataset(spglib_cell, symprec)
+
+    return CrystalStructure(x_frac, x_cart, species, m, invsqrtm, cell, cell_inv, sym_data)
 end
 
 
-###################
+volume(cs::CrystalStructure) = det(cs.L)
+primitive_volume(cs::CrystalStructure) = det(cs.sym_data.primitive_lattice)
+n_atoms_primitive(cs::CrystalStructure) = length(unique(cs.sym_data.mapping_to_primitive))
 
-abstract type ConfigSettings end
+Base.length(sys::CrystalStructure) = length(sys.x_frac)
+Base.size(sys::CrystalStructure) = size(sys.x_frac)
 
-struct QuantumConfigSettings <: ConfigSettings
+Base.getindex(sys::CrystalStructure, i::Integer) = AtomView(sys, i)
+
+AtomsBase.cell_vectors(sys::CrystalStructure) = AtomsBase._auto_cell_vectors(tuple(eachcol(sys.L)...))
+AtomsBase.periodicity(::CrystalStructure) = (true, true, true)
+
+function Base.getindex(system::CrystalStructure, x::Symbol)
+    if x === :cell_vectors
+        cell_vectors(system)
+    elseif x === :periodicity
+        periodicity(system)
+    else
+        throw(KeyError(x))
+    end
+end
+Base.haskey(::CrystalStructure, x::Symbol) = x in (:cell_vectors, :periodicity)
+Base.keys(::CrystalStructure) = (:cell_vectors, :periodicity)
+
+# Atom and atom property access
+AtomsBase.atomkeys(::CrystalStructure) = (:x_frac, :x_cart, :m, :invsqrtm)
+AtomsBase.cell(sys::CrystalStructure) = AtomsBase.PeriodicCell(cell_vectors(sys), periodicity(sys))
+
+AtomsBase.hasatomkey(system::CrystalStructure, x::Symbol) = x in atomkeys(system)
+
+function Base.getindex(system::CrystalStructure, i::Union{Integer,AbstractVector}, x::Symbol)
+    getfield(system, x)[i]
+end
+
+Base.getindex(system::CrystalStructure, ::Colon, x::Symbol) = getfield(system, x)
+
+AtomsBase.position(s::CrystalStructure, ::Colon) = s.x_cart
+AtomsBase.position(sys::CrystalStructure, i::Union{Integer, AbstractVector}) = sys.x_cart[i]
+
+AtomsBase.mass(s::CrystalStructure, ::Colon) = s.m
+AtomsBase.mass(sys::CrystalStructure, i::Union{Integer, AbstractVector}) = sys.m[i]
+
+AtomsBase.species(s::CrystalStructure, ::Colon) = AtomsBase.ChemicalSpecies.(s.species)
+AtomsBase.species(sys::CrystalStructure, i::Union{Integer, AbstractVector}) = AtomsBase.ChemicalSpecies(sys.species[i])
+
+AtomsBase.atomic_symbol(s::CrystalStructure, ::Colon) = s.species
+AtomsBase.atomic_symbol(s::CrystalStructure, i::Union{Integer, AbstractVector}) = s.species[i]
+
+AtomsBase.atomic_number(s::CrystalStructure, ::Colon) = atomic_number.(s.species)
+AtomsBase.atomic_number(s::CrystalStructure, i::Union{Integer, AbstractVector}) = atomic_number(s.species[i])
+
+######################
+
+
+######################
+
+abstract type Limit end
+struct Quantum <: Limit end
+struct Classical <: Limit end
+
+struct ConfigSettings{L <: Limit}
     n_configs::Int
     temperature::Float64
 end
 
-struct ClassicalConfigSettings <: ConfigSettings
-    n_configs::Int
-    temperature::Float64
+function ConfigSettings(n_configs::Int, temperature::Float64, ::Type{L}) where {L <: Limit}
+    return ConfigSettings{L}(n_configs, temperature)
 end
+
+# Type aliases
+const QuantumConfigSettings = ConfigSettings{Quantum}
+const ClassicalConfigSettings = ConfigSettings{Classical}
+
+

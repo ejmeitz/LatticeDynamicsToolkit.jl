@@ -1,12 +1,10 @@
-export canonical_configs, canonical_configs_and_velocities, canonical_velocities, mean_amplitude
-
-function bose_einstein(freq, temp)
-    x =  upreferred(freq / (kB_Hartree * temp))
-    return 1 / (exp(x) - 1)
-end
-
+export 
+    canonical_configs, 
+    canonical_configs_and_velocities, 
+    canonical_velocities
+    
 function mean_amplitude(qc::QuantumConfigSettings, freq, mass)
-    nᵢ = bose_einstein(freq, qc.temperature)
+    nᵢ = planck(qc.temperature, freq)
     return sqrt((2*nᵢ + 1) / (2 * mass * freq))
 end
 
@@ -225,3 +223,4 @@ function canonical_configs!(output, f::Function, CM::ConfigSettings, freqs::Abst
 
     return output
 end
+

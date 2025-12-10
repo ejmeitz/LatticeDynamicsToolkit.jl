@@ -1,5 +1,11 @@
 export remap
 
+"""
+IFCs are normally only calculated/saved for each atom in the primitive cell. The 
+remapping logic here allows you to calculate dense representations of the
+IFCs given some supercell. This can be useful for size effects or gamma point
+studies. 
+"""
 
 function remap(new_sc::CrystalStructure, uc::CrystalStructure, ifcs::IFCs...)
 

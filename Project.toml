@@ -1,14 +1,29 @@
-name = "TDEPToolkit"
+name = "LatticeDynamicsToolkit"
 uuid = "b29279a7-2984-401e-b335-37c7be833a5d"
 authors = ["Ethan Meitz <emeitz@andrew.cmu.edu>"]
 version = "0.0.1"
 
 [deps]
+AtomsBase = "a963bdd2-2df7-4f54-a1ee-49d51e6be12a"
+AtomsCalculators = "a3e0e189-c65a-42c1-833c-339540406eb1"
 CellListMap = "69e1c6dd-3888-40e6-b3c8-31ac5f578864"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 OhMyThreads = "67456a42-1dca-4109-a031-0a68de7e3ad5"
 PeriodicTable = "7b2266bf-644c-5ea3-82d8-af4bbd25a884"
 ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Spglib = "f761d5c5-86db-4880-b97f-9680a7cccfb5"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
+
+[weakdeps]
+LAMMPS = "ee2e13b9-eee9-4449-aafa-cfa6a2dbe14d"
+
+[extensions]
+LAMMPSExt = "LAMMPS"
+
+[compat]
+AtomsBase = "0.5.2"
+AtomsCalculators = "0.2.3"
+LAMMPS = "0.10"
+Spglib = "1.0.1"
