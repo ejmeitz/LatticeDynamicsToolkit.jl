@@ -128,17 +128,17 @@ function sum_over_freqs(
     return res
 end
 
-U_harmonic_single = (ω, kBT, ::Type{Quantum}) -> ω * ((1 / (exp(ω/(kBT)) - 1)) + 0.5)
-U_harmonic_single = (ω, kBT, ::Type{Classical}) -> kBT
+U_harmonic_single(ω, kBT, ::Type{Quantum}) = ω * ((1 / (exp(ω/(kBT)) - 1)) + 0.5)
+U_harmonic_single(ω, kBT, ::Type{Classical}) = kBT
 
-F_harmonic_single = (ω, kBT, ::Type{Quantum}) -> (0.5*ω) + (kBT * log(1 - exp(-ω/kBT)))
-F_harmonic_single = (ω, kBT, ::Type{Classical}) -> kBT * log(ω/kBT)
+F_harmonic_single(ω, kBT, ::Type{Quantum}) = (0.5*ω) + (kBT * log(1 - exp(-ω/kBT)))
+F_harmonic_single(ω, kBT, ::Type{Classical}) = kBT * log(ω/kBT)
 
-S_harmonic_single = (ω, kBT, ::Type{Quantum}) -> kB_Hartree * (((ω/kBT) / (exp(ω/kBT) - 1)) - log(1 - exp(-ω/kBT)))
-S_harmonic_single = (ω, kBT, ::Type{Classical}) -> kB_Hartree * (1 - log(ω/kBT))
+S_harmonic_single(ω, kBT, ::Type{Quantum}) = kB_Hartree * (((ω/kBT) / (exp(ω/kBT) - 1)) - log(1 - exp(-ω/kBT)))
+S_harmonic_single(ω, kBT, ::Type{Classical}) = kB_Hartree * (1 - log(ω/kBT))
 
-Cv_harmonic_single = (ω, kBT, ::Type{Quantum}) -> kB_Hartree * ((ω/(2*kBT))^2) * (csch(ω/(2*kBT))^2)
-Cv_harmonic_single = (ω, kBT, ::Type{Classical}) -> kB_Hartree
+Cv_harmonic_single(ω, kBT, ::Type{Quantum}) = kB_Hartree * ((ω/(2*kBT))^2) * (csch(ω/(2*kBT))^2)
+Cv_harmonic_single(ω, kBT, ::Type{Classical}) = kB_Hartree
 
 U_harmonic(freqs, T, ::Type{L}) where {L <: Limit} = sum_over_freqs(freqs, ω -> U_harmonic_single(ω, kB_Hartree*T, L))
 F_harmonic(freqs, T, ::Type{L}) where {L <: Limit} = sum_over_freqs(freqs, ω -> F_harmonic_single(ω, kB_Hartree*T, L))
