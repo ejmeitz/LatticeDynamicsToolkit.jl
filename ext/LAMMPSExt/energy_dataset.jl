@@ -8,7 +8,8 @@ function LatticeDynamicsToolkit.make_energy_dataset(
         ifc2::IFC2, # required, but pass as kwarg
         ifc3::Union{Nothing, IFC3} = nothing,
         ifc4::Union{Nothing, IFC4} = nothing,
-        n_threads::Integer = Threads.nthreads()
+        n_threads::Integer = Threads.nthreads(),
+        antithetic::Bool = false
     )
 
     valid_ifcs = Iterators.filter(!isnothing, (ifc2, ifc3, ifc4))
@@ -17,7 +18,8 @@ function LatticeDynamicsToolkit.make_energy_dataset(
     valid_ifcs_remapped = remap(sc, uc, valid_ifcs...)
     valid_ifcs_remapped_kwargs = LatticeDynamicsToolkit.build_kwargs(valid_ifcs_remapped...)
     
-    return _make_energy_dataset(cc_settings, sc, make_calc; valid_ifcs_remapped_kwargs..., n_threads = n_threads)
+    return _make_energy_dataset(cc_settings, sc, make_calc; valid_ifcs_remapped_kwargs...,
+                                 n_threads = n_threads, antithetic = antithetic)
 end
 
 #Assumes IFCs are supercell already
@@ -29,7 +31,8 @@ function _make_energy_dataset(
     ifc2::IFC2,
     ifc3::Union{Nothing, IFC3} = nothing,
     ifc4::Union{Nothing, IFC4} = nothing,
-    n_threads::Integer = Threads.nthreads()
+    n_threads::Integer = Threads.nthreads(),
+    antithetic::Bool = false
 )
     valid_ifcs = Iterators.filter(!isnothing, (ifc2, ifc3, ifc4))
 
@@ -53,7 +56,8 @@ function _make_energy_dataset(
         freqs,
         phi,
         sc.m;
-        n_threads = n_threads
+        n_threads = n_threads,
+        antithetic = antithetic
     )
 
     return Hartree_to_eV .* tep_energies, V
@@ -71,7 +75,8 @@ function _canonical_configs_V!(
         phi::AbstractMatrix, 
         atom_masses::AbstractVector;
         n_threads::Int = Threads.nthreads(),
-        D::Int = 3
+        D::Int = 3,
+        antithetic::Bool = false
     )
     
     N_atoms = Int(length(freqs) / D)
@@ -106,6 +111,7 @@ function _canonical_configs_V!(
             tmp = zeros(size(phi_A))
             coord_storage = zeros(D*N_atoms)
             randn_storage = zeros(D*N_atoms - D)
+            coord_storage2 = antithetic ? zeros(D*N_atoms) : nothing
         end
 
         calc = take!(chnl)
@@ -118,13 +124,31 @@ function _canonical_configs_V!(
         # Evalulate user function
         coord_storage .= vec(sum(tmp, dims=1))
         cs = reinterpret(SVector{D, Float64}, coord_storage)
-        output[n] = f(cs)
+        out_positive = f(cs)
 
         # Calculate energy with provided calculator
         # all LAMMPSCalculators use metal units
         cs .*= bohr_to_A
         cs .+= x_cart_eq_ang
-        V[n] = single_point_potential_energy(cs, calc)
+        V_positive = single_point_potential_energy(cs, calc)
+
+        if antithetic
+            # Build -u displacement
+            coord_storage2 .= -coord_storage
+            cs2 = reinterpret(SVector{D,Float64}, coord_storage2)
+
+            out_minus = f(cs2)
+
+            cs2_lmp = (cs2 .* bohr_to_A) .+ x_cart_eq_ang
+            V_minus = single_point_potential_energy(cs2_lmp, calc)
+
+            # Store paired averages
+            output[n] = 0.5 .* (out_positive .+ out_minus)
+            V[n]      = 0.5 * (V_positive + V_minus)
+        else
+            output[n] = out_positive
+            V[n]      = V_positive
+        end
 
         put!(chnl, calc)
         next!(p)

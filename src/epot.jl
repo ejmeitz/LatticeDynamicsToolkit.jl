@@ -128,7 +128,8 @@ function make_energy_dataset(
         ifc2::IFC2, # required, but pass as kwarg
         ifc3::Union{Nothing, IFC3} = nothing,
         ifc4::Union{Nothing, IFC4} = nothing,
-        n_threads::Integer = Threads.nthreads()
+        n_threads::Integer = Threads.nthreads(),
+        antithetic::Bool = false
     )
 
     valid_ifcs = Iterators.filter(!isnothing, (ifc2, ifc3, ifc4))
@@ -137,7 +138,8 @@ function make_energy_dataset(
     valid_ifcs_remapped = remap(sc, uc, valid_ifcs...)
     valid_ifcs_remapped_kwargs = build_kwargs(valid_ifcs_remapped...)
     
-    return _make_energy_dataset_no_V(cc_settings, sc; valid_ifcs_remapped_kwargs..., n_threads = n_threads)
+    return _make_energy_dataset_no_V(cc_settings, sc; valid_ifcs_remapped_kwargs...,
+                                         n_threads = n_threads, antithetic = antithetic)
 end
 
 # Assumes IFCs are supercell already
@@ -147,7 +149,8 @@ function _make_energy_dataset(
     ifc2::IFC2,
     ifc3::Union{Nothing, IFC3} = nothing,
     ifc4::Union{Nothing, IFC4} = nothing,
-    n_threads::Integer = Threads.nthreads()
+    n_threads::Integer = Threads.nthreads(),
+    antithetic::Bool = false
 )
     valid_ifcs = Iterators.filter(!isnothing, (ifc2, ifc3, ifc4))
 
@@ -169,7 +172,8 @@ function _make_energy_dataset(
         freqs,
         phi,
         sc.m;
-        n_threads = n_threads
+        n_threads = n_threads,
+        antithetic = antithetic
     )
 
     return Hartree_to_eV .* tep_energies
