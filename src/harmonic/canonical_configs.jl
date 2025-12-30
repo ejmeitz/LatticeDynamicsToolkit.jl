@@ -182,10 +182,9 @@ end
 
 # in place version that evaluates f on each generated config and stores the result in output
 # avoids allocating all configurations in RAM. Expects f(::Vector{SVector{3, Float64}})
-# also supports antithetic sampling to reduce varaince of observables
 function canonical_configs!(output, f::Function, CM::ConfigSettings, freqs::AbstractVector,
                          phi::AbstractMatrix, atom_masses::AbstractVector;
-                         n_threads::Int = Threads.nthreads(), D::Int = 3, antithetic::Bool = false)
+                         n_threads::Int = Threads.nthreads(), D::Int = 3)
     
     N_atoms = Int(length(freqs) / D)
 
@@ -208,7 +207,6 @@ function canonical_configs!(output, f::Function, CM::ConfigSettings, freqs::Abst
             tmp = zeros(size(phi_A))
             coord_storage = zeros(D*N_atoms)
             randn_storage = zeros(D*N_atoms - D)
-            coord_storage2 = antithetic ? zeros(D*N_atoms) : nothing
         end
 
         randn!(randn_storage)
@@ -217,15 +215,7 @@ function canonical_configs!(output, f::Function, CM::ConfigSettings, freqs::Abst
         tmp .*= randn_storage
 
         coord_storage .= vec(sum(tmp, dims=1))
-        out_p = f(reinterpret(SVector{D, Float64}, coord_storage))
-
-        if antithetic
-            coord_storage2 .= -coord_storage
-            out_m = f(reinterpret(SVector{D, Float64}, coord_storage2))
-            output[n] = 0.5 .* (out_p .+ out_m)
-        else
-            output[n] = out_p
-        end
+        output[n] = f(reinterpret(SVector{D, Float64}, coord_storage))
 
         next!(p)
     end
