@@ -198,7 +198,7 @@ function (::Type{<:Matrix})(ifc2::AmorphousIFC2)
         end
     end
 
-    # Enforce exact symmetry
+    #Enforce exact symmetry
     @inbounds for j in 1:n_dof, i in j+1:n_dof
         s = 0.5 * (out[i,j] + out[j,i])
         out[i,j] = s; out[j,i] = s

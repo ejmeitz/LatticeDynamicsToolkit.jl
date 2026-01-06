@@ -38,7 +38,7 @@ end
 
 
 """
-    fit_ifc2(crystal, positions, forces; r_cut, λ=1e-6, μ=1e6) -> AmorphousIFC2
+    fit_ifc2(crystal, positions, forces; r_cut, λ=1e-6, hard_constraints=true, μ=1e6) -> AmorphousIFC2
 
 Fit second-order interatomic force constants for amorphous/disordered systems.
 
@@ -48,22 +48,22 @@ Fit second-order interatomic force constants for amorphous/disordered systems.
 - `forces::Matrix{Float64}`: Cartesian forces `(3, na * n_timesteps)` in Hartree/bohr
 - `r_cut::Float64`: Cutoff radius for IFC interactions (bohr)
 - `λ::Float64`: Ridge regularization parameter (default 1e-6)
-- `μ::Float64`: Hessian symmetry constraint weight (default 1e6). Enforces symmetric diagonal blocks.
+- `hard_constraints::Bool`: If true, use Lagrange multipliers for exact Hessian symmetry (default true).
+                            If false, use penalty method with weight μ.
+- `μ::Float64`: Hessian symmetry penalty weight, only used if hard_constraints=false (default 1e6).
 
 # Returns
 `AmorphousIFC2` with fitted force constants satisfying:
 - Acoustic sum rule: Φ_ii = -Σ_{j≠i} Φ_ij (exact, by construction)
 - Newton's 3rd law: Φ_ij = Φ_ji^T (exact, by construction)
-- Hessian symmetry: Φ_ii = Φ_ii^T (enforced via penalty constraint)
+- Hessian symmetry: Φ_ii = Φ_ii^T (exact with Lagrange multipliers, approximate with penalty)
 
 # Method
 Solves the linear system `F_i = Σ_{j≠i} Φ_ij · (u_i - u_j)` where:
 - Only upper-triangle pairs (i < j) are independent unknowns
 - Relative displacements `Δu = u_i - u_j` automatically enforce ASR
 - Symmetric contribution to both F_i and F_j enforces Newton's 3rd law
-- Penalty term μ·||Cφ||² enforces Σ_j Φ_ij is symmetric (diagonal block symmetry)
-
-Uses ridge regression: `(A'A + λI + μC'C) φ = A'F` solved via Cholesky factorization.
+- Hessian symmetry constraint: Σ_j Φ_ij^{αβ} = Σ_j Φ_ij^{βα} (symmetric diagonal blocks)
 """
 function fit_ifc2(
     crystal::CrystalStructure,
@@ -71,6 +71,7 @@ function fit_ifc2(
     forces::Matrix{Float64};
     r_cut::Float64,
     λ::Float64 = 1e-6,
+    hard_constraints::Bool = true,
     μ::Float64 = 1e6
 )
     na = length(crystal)
@@ -229,22 +230,44 @@ function fit_ifc2(
     
     C_mat = sparse(C_I, C_J, C_V, n_constraints, n_unknowns)
     
-    # Solve via normal equations with ridge regularization and Hessian symmetry constraint
-    # minimize ||Aφ - F||² + λ||φ||² + μ||Cφ||²
-    # (A'A + λI + μC'C) φ = A'F
-    @info "Solving normal equations with Hessian symmetry constraint..."
+    # Solve with Hessian symmetry constraint
     AtA = A' * A
-    CtC = C_mat' * C_mat
-    AtA_reg = AtA + λ * I + μ * CtC
     AtF = A' * F
     
-    # Cholesky factorization and solve
-    chol = cholesky(Symmetric(AtA_reg))
-    φ = chol \ AtF
-    
-    # Report constraint violation
-    constraint_violation = norm(C_mat * φ)
-    @info "Constraint violation" hessian_symmetry_norm=constraint_violation
+    if hard_constraints
+        # Lagrange multiplier method (exact constraints)
+        # Solve saddle-point system:
+        # [A'A + λI,  C'] [φ]   [A'F]
+        # [C,         0 ] [ν] = [0  ]
+        @info "Solving with Lagrange multipliers (exact Hessian symmetry)..."
+        
+        K = [AtA + λ * sparse(I, n_unknowns, n_unknowns)  C_mat';
+             C_mat                                         spzeros(n_constraints, n_constraints)]
+        rhs = [AtF; zeros(n_constraints)]
+        
+        # Solve the saddle-point system
+        sol = K \ rhs
+        φ = sol[1:n_unknowns]
+        
+        # Report constraint violation (should be ~machine epsilon)
+        constraint_violation = norm(C_mat * φ)
+        @info "Constraint violation (should be ~0)" hessian_symmetry_norm=constraint_violation
+    else
+        # Penalty method (soft constraints)
+        # minimize ||Aφ - F||² + λ||φ||² + μ||Cφ||²
+        # (A'A + λI + μC'C) φ = A'F
+        @info "Solving with penalty method (μ=$μ)..."
+        
+        CtC = C_mat' * C_mat
+        AtA_reg = AtA + λ * I + μ * CtC
+        
+        chol = cholesky(Symmetric(AtA_reg))
+        φ = chol \ AtF
+        
+        # Report constraint violation
+        constraint_violation = norm(C_mat * φ)
+        @info "Constraint violation" hessian_symmetry_norm=constraint_violation
+    end
     
     # Compute fit quality
     residual = A * φ - F
