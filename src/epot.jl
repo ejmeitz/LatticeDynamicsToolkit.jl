@@ -137,7 +137,8 @@ function make_energy_dataset(
     valid_ifcs_remapped = remap(sc, uc, valid_ifcs...)
     valid_ifcs_remapped_kwargs = build_kwargs(valid_ifcs_remapped...)
     
-    return _make_energy_dataset_no_V(cc_settings, sc; valid_ifcs_remapped_kwargs..., n_threads = n_threads)
+    return _make_energy_dataset_no_V(cc_settings, sc; valid_ifcs_remapped_kwargs...,
+                                         n_threads = n_threads)
 end
 
 # Assumes IFCs are supercell already

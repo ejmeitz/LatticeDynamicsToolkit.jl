@@ -17,7 +17,8 @@ function LatticeDynamicsToolkit.make_energy_dataset(
     valid_ifcs_remapped = remap(sc, uc, valid_ifcs...)
     valid_ifcs_remapped_kwargs = LatticeDynamicsToolkit.build_kwargs(valid_ifcs_remapped...)
     
-    return _make_energy_dataset(cc_settings, sc, make_calc; valid_ifcs_remapped_kwargs..., n_threads = n_threads)
+    return _make_energy_dataset(cc_settings, sc, make_calc; valid_ifcs_remapped_kwargs...,
+                                 n_threads = n_threads)
 end
 
 #Assumes IFCs are supercell already
@@ -125,6 +126,7 @@ function _canonical_configs_V!(
         cs .*= bohr_to_A
         cs .+= x_cart_eq_ang
         V[n] = single_point_potential_energy(cs, calc)
+
 
         put!(chnl, calc)
         next!(p)

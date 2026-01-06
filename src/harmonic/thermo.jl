@@ -62,9 +62,6 @@ function harmonic_properties(T,  ω::AbstractVector, ::Type{L}) where {L <: Limi
 end
 
 
-#* FIX CONTRIBUTION FROM Zero-Point MOTION ON RIGID TRANSLATION MODES??
-#* SEE HOW TDEP IMPLEMENTS THINGS LIKE FREE ENERGY
-
 function sum_over_freqs(freqs, f::Function; kwargs...)
     res = 0.0
     for freq in freqs
@@ -128,6 +125,9 @@ function sum_over_freqs(
     return res
 end
 
+
+#* Could fix some things with respect to numerical stability
+#* at low/high temperatures
 U_harmonic_single(ω, kBT, ::Type{Quantum}) = ω * ((1 / (exp(ω/(kBT)) - 1)) + 0.5)
 U_harmonic_single(ω, kBT, ::Type{Classical}) = kBT
 
