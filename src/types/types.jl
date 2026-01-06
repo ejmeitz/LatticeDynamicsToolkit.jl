@@ -1,83 +1,11 @@
 export 
-    IFC2, IFC3, IFC4,
     CrystalStructure, ConfigSettings,
     ClassicalConfigSettings, QuantumConfigSettings,
     Quantum, Classical, Limit
     
 
-abstract type IFCs end
-
-# mimics the lo_fc2_pair type
-struct FC2Data 
-    idxs::SVector{2, Int} # indices in unitcell
-    lvs::SVector{2, SVector{3, Float64}} # cartesian lattice vectors for the unit cell these atoms belong to
-    r::SVector{3, Float64} # cartesian vector between atom 1 and 2
-    n2::SVector{3,Int16} # image flags for each atom, n1 is always zero vector
-    ifcs::SMatrix{3, 3, Float64, 9}
-end 
-
-# mimics the lo_fc3_triplet type
-struct FC3Data
-    idxs::SVector{3, Int} # indices in unitcell
-    lvs::SVector{3, SVector{3, Float64}}
-    rv1::SVector{3, Float64}
-    rv2::SVector{3, Float64}
-    rv3::SVector{3, Float64}
-    n2::SVector{3,Int16}
-    n3::SVector{3,Int16}
-    ifcs::SArray{Tuple{3,3,3}, Float64, 3, 27}
-end
-
-struct FC4Data
-    idxs::SVector{4, Int} # indices in unitcell
-    lvs::SVector{4, SVector{3, Float64}}
-    rv1::SVector{3, Float64}
-    rv2::SVector{3, Float64}
-    rv3::SVector{3, Float64}
-    rv4::SVector{3, Float64}
-    n2::SVector{3,Int16}
-    n3::SVector{3,Int16}
-    n4::SVector{3,Int16}
-    ifcs::SArray{Tuple{3,3,3,3}, Float64, 4, 81}
-end
-
-struct IFC2 <: IFCs
-    na::Int # number of atoms in the cell
-    r_cut::Float64
-    # all interactions for each atom in the unitcell, has length na_uc
-    # by translational symmetry we can re-build all other IFCs
-    atoms::Vector{Vector{FC2Data}}
-end
-
-struct IFC3 <: IFCs
-    na::Int
-    r_cut::Float64
-    atoms::Vector{Vector{FC3Data}}
-end
-
-struct IFC4 <: IFCs
-    na::Int
-    r_cut::Float64
-    atoms::Vector{Vector{FC4Data}}
-end
-
-get_interactions(data::I, i::Int) where {I <: IFCs} = data.atoms[i]
-
-get_kwarg(::IFC2) = :ifc2
-get_kwarg(::IFC3) = :ifc3
-get_kwarg(::IFC4) = :ifc4
-
-build_kwargs(ifcs::IFCs...) = NamedTuple{get_kwarg.(ifcs)}(ifcs)
-
-Base.show(io::IO, ifc::IFC2) =
-    print(io, "2nd Order IFCs, cutoff = $(round(ifc.r_cut*bohr_to_A, digits = 5)) Ang from $(ifc.na) atom unit-cell")
-
-Base.show(io::IO, ifc::IFC3) =
-    print(io, "3rd Order IFCs, cutoff = $(round(ifc.r_cut*bohr_to_A, digits = 5)) Ang from $(ifc.na) atom unit-cell")
-
-Base.show(io::IO, ifc::IFC4) =
-    print(io, "4th Order IFCs, cutoff = $(round(ifc.r_cut*bohr_to_A, digits = 5)) Ang from $(ifc.na) atom unit-cell")
-
+#######################
+# Distance Table Types
 #######################
 
 struct DistanceTableAtom{N}
@@ -100,6 +28,8 @@ end
 
 
 ##############################
+# Crystal Structure
+##############################
 
 struct CrystalStructure <: AbstractSystem{3}
     x_frac::Vector{SVector{3,Float64}}
@@ -109,16 +39,19 @@ struct CrystalStructure <: AbstractSystem{3}
     invsqrtm::Vector{Float64} # 1/sqrt(m)
     L::SMatrix{3,3,Float64,9} # bohr
     L_inv::SMatrix{3,3,Float64,9}
-    sym_data::Spglib.Dataset
+    sym_data::Union{Spglib.Dataset, Nothing}
 end
 
 
 """
-    CrystalStructure(poscar_path::String)
+    CrystalStructure(poscar_path::String; symprec=1e-5, compute_symmetry=true)
 
 - `poscar_path::String` : Path to POSCAR file to parse, only fractional coords supported
+- `symprec::Float64` : Symmetry precision for Spglib (default 1e-5)
+- `compute_symmetry::Bool` : Whether to compute space group symmetry (default true).
+   Set to `false` for amorphous systems to skip Spglib analysis.
 """
-function CrystalStructure(poscar_path::String; symprec::Float64 = 1e-5) 
+function CrystalStructure(poscar_path::String; symprec::Float64 = 1e-5, compute_symmetry::Bool = true) 
 
     species, x_frac, cell = read_poscar_data(poscar_path)
 
@@ -138,21 +71,31 @@ function CrystalStructure(poscar_path::String; symprec::Float64 = 1e-5)
     m = ustrip.([periodic_table[s].atomic_mass for s in species]) .* amu_to_emu 
     invsqrtm = 1.0 ./ sqrt.(m)
 
-    spglib_cell = Spglib.SpglibCell(
-        cell,
-        x_frac,
-        atomic_number.(species)
-    )
-
-    sym_data = Spglib.get_dataset(spglib_cell, symprec)
+    sym_data = nothing
+    if compute_symmetry
+        spglib_cell = Spglib.SpglibCell(
+            cell,
+            x_frac,
+            atomic_number.(species)
+        )
+        sym_data = Spglib.get_dataset(spglib_cell, symprec)
+    end
 
     return CrystalStructure(x_frac, x_cart, species, m, invsqrtm, cell, cell_inv, sym_data)
 end
 
 
 volume(cs::CrystalStructure) = det(cs.L)
-primitive_volume(cs::CrystalStructure) = det(cs.sym_data.primitive_lattice)
-n_atoms_primitive(cs::CrystalStructure) = length(unique(cs.sym_data.mapping_to_primitive))
+
+function primitive_volume(cs::CrystalStructure)
+    isnothing(cs.sym_data) && error("Symmetry data not available. Set compute_symmetry=true when constructing CrystalStructure.")
+    return det(cs.sym_data.primitive_lattice)
+end
+
+function n_atoms_primitive(cs::CrystalStructure)
+    isnothing(cs.sym_data) && error("Symmetry data not available. Set compute_symmetry=true when constructing CrystalStructure.")
+    return length(unique(cs.sym_data.mapping_to_primitive))
+end
 
 Base.length(sys::CrystalStructure) = length(sys.x_frac)
 Base.size(sys::CrystalStructure) = size(sys.x_frac)
@@ -222,5 +165,3 @@ end
 # Type aliases
 const QuantumConfigSettings = ConfigSettings{Quantum}
 const ClassicalConfigSettings = ConfigSettings{Classical}
-
-
