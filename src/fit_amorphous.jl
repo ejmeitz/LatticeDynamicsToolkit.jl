@@ -235,19 +235,33 @@ function fit_ifc2(
     AtF = A' * F
     
     if hard_constraints
-        # Lagrange multiplier method (exact constraints)
-        # Solve saddle-point system:
-        # [A'A + λI,  C'] [φ]   [A'F]
-        # [C,         0 ] [ν] = [0  ]
-        @info "Solving with Lagrange multipliers (exact Hessian symmetry)..."
+        # Lagrange multiplier method via Schur complement (exact constraints)
+        # Saddle-point system:
+        # [H  C'] [φ]   [b]
+        # [C  0 ] [ν] = [0]
+        # 
+        # Solved via Schur complement: S = C H⁻¹ C', then S ν = C H⁻¹ b
+        @info "Solving with Lagrange multipliers (Schur complement)..."
         
-        K = [AtA + λ * sparse(I, n_unknowns, n_unknowns)  C_mat';
-             C_mat                                         spzeros(n_constraints, n_constraints)]
-        rhs = [AtF; zeros(n_constraints)]
+        H = AtA + λ * sparse(I, n_unknowns, n_unknowns)
+        b = AtF
         
-        # Solve the saddle-point system
-        sol = K \ rhs
-        φ = sol[1:n_unknowns]
+        # Factor H (positive definite)
+        H_chol = cholesky(Symmetric(H))
+        
+        # Compute H⁻¹ b and H⁻¹ C' efficiently
+        H_inv_b = H_chol \ b
+        H_inv_Ct = H_chol \ Matrix(C_mat')  # Convert to dense for the solve
+        
+        # Schur complement: S = C H⁻¹ C' (small: n_constraints × n_constraints)
+        S = C_mat * H_inv_Ct
+        
+        # Solve for Lagrange multipliers: S ν = C H⁻¹ b
+        rhs_schur = C_mat * H_inv_b
+        ν = S \ rhs_schur
+        
+        # Recover primal: φ = H⁻¹ (b - C' ν)
+        φ = H_inv_b - H_inv_Ct * ν
         
         # Report constraint violation (should be ~machine epsilon)
         constraint_violation = norm(C_mat * φ)
