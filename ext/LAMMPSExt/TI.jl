@@ -144,12 +144,13 @@ function _TI_step(
 
     command(lc.lmp, "reset_timestep 0")
     command(lc.lmp, "neigh_modify every 1 delay 0 check yes")
-    command(lc.lmp, "compute disp all displace/atom")
 
     scatter!(lc.lmp, "x", reinterpret(reshape, Float64, x0))
     seed = rand(1000:1_000_000)
     command(lc.lmp, "velocity all create $(s.T) $(seed) dist gaussian mom yes")
-    
+
+    command(lc.lmp, "compute disp all displace/atom")
+
     # This makes energy available inside FixTIExternal
     command(lc.lmp, "thermo 1")
     command(lc.lmp, "thermo_style custom step pe")
@@ -163,7 +164,7 @@ function _TI_step(
     command(lc.lmp, "run $(s.nsteps + s.nsteps_equil)")
 
     command(lc.lmp, "unfix 1")
-    command(lc.lmp, "uncompute disp") # Defined in FixTIExternal
+    command(lc.lmp, "uncompute disp")
     command(lc.lmp, "unfix ti_julia") # Defined in FixTIExternal
 
     return sum(ΔU)/length(ΔU)
