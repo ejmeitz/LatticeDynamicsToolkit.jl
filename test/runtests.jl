@@ -181,10 +181,13 @@ end
 
 
     # ============ FILL THESE IN ============
-    poscar_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/aSi/infile.ssposcar"
-    positions_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/aSi/infile.positions"
-    forces_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/aSi/infile.forces"
-    n_timesteps = 300  # number of MD snapshots
+    # poscar_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/aSi/infile.ssposcar"
+    poscar_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/SW/infile.ssposcar"
+    # positions_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/aSi/infile.positions"
+    positions_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/SW/1300K_3UC/infile.positions"
+    # forces_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/aSi/infile.forces"
+    forces_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/SW/1300K_3UC/infile.forces"
+    n_timesteps = 1000 #300  # number of MD snapshots
     r_cut_angstrom = 4.0  # cutoff in Angstrom
     # =======================================
 
@@ -272,6 +275,8 @@ end
     println("   (Note: approximate check, fitting used proper PBC)")
 
 end
+
+
 
     # ifc2_remapped = remap(sc, uc, ifc2)[1]
     # dynmat = TDEPToolkit.dynmat_gamma(ifc2_remapped, sc)

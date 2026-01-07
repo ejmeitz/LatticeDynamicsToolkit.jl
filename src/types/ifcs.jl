@@ -119,7 +119,7 @@ Convert crystalline IFC2 to a dense 3N×3N force constant matrix.
 Assumes `ifc2` has been remapped to the supercell `sc`.
 
 The resulting matrix enforces:
-- Exact symmetry: Φ_ij = Φ_ji^T
+- Exact symmetry by construction: Φ_ij = Φ_ji^T
 - Acoustic sum rule: Σ_j Φ_ij = 0
 """
 function (::Type{<:Matrix})(ifc2::IFC2, sc::CrystalStructure)
@@ -167,6 +167,7 @@ Convert AmorphousIFC2 to a dense 3N×3N force constant matrix.
 The matrix is constructed with:
 - Symmetry Φ_ij = Φ_ji^T (by construction from fitting)
 - ASR via row sums: Φ_ii[α,β] = -Σ_j Φ_ij[α,β]
+- Exact symmetry enforced manually via symmetrization
 """
 function (::Type{<:Matrix})(ifc2::AmorphousIFC2)
     na = ifc2.na
