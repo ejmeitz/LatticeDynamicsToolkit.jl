@@ -1,4 +1,4 @@
-export harmonic_properties
+export harmonic_properties, get_frequencies, get_frequencies_THz
 
 function harmonic_properties(
         T, 
@@ -60,6 +60,47 @@ function harmonic_properties(T,  ω::AbstractVector, ::Type{L}) where {L <: Limi
     Cᵥ₀ = Cv_harmonic(ω, T, L)
     return F₀ / N_atoms, S₀ / N_atoms, U₀ / N_atoms, Cᵥ₀ / N_atoms
 end
+
+
+"""
+    harmonic_properties(T, ifc2::AmorphousIFC2, crystal::CrystalStructure, ::Type{L}) where {L <: Limit}
+
+Compute harmonic thermodynamic properties for an amorphous system at temperature T.
+
+For amorphous systems, only the gamma point (q=0) is meaningful since there's no 
+translational symmetry / Brillouin zone. To be sure there are not size effects,
+you must use a large enough supercell.
+
+# Arguments
+- `T::Real`: Temperature in Kelvin
+- `ifc2::AmorphousIFC2`: Fitted force constants
+- `sc::CrystalStructure`: Supercell used to fit the IFCs
+- `L::Type{<:Limit}`: Either `Quantum` or `Classical`
+
+# Returns
+Tuple of (F, S, U, Cᵥ) per atom in Hartree (F, U) or Hartree/K (S, Cᵥ)
+"""
+function harmonic_properties(
+    T::Real,
+    ifc2::AmorphousIFC2,
+    sc::CrystalStructure,
+    ::Type{L}
+) where {L <: Limit}
+    
+     # Build dynamical matrix (mass-weighted force constants)
+     D = dynmat_gamma(ifc2, sc)
+    
+     # Get eigenvalues (ω²) - gamma point sets 3 translational modes to 0
+     ω², _ = get_modes(D, Val{true}())
+     
+     # Convert to frequencies: ω = sign(ω²) * sqrt(|ω²|)
+     # Negative ω² → imaginary frequency (reported as negative)
+     ω = negsqrt.(ω²)
+
+    return harmonic_properties(Float64(T), ω, L)
+end
+
+
 
 
 function sum_over_freqs(freqs, f::Function; kwargs...)

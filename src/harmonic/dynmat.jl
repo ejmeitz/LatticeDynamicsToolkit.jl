@@ -47,6 +47,45 @@ function dynmat_gamma(fc_sc::IFC2, sc::CrystalStructure)
 
 end
 
+
+"""
+    dynmat_gamma(ifc::AmorphousIFC2, crystal::CrystalStructure) -> Hermitian{Float64}
+
+Build the dynamical matrix at the gamma point (q=0) for an amorphous system.
+
+The dynamical matrix is: D_ij,αβ = Φ_ij,αβ / sqrt(m_i * m_j)
+
+For amorphous systems, only the gamma point is meaningful since there's no 
+translational symmetry / Brillouin zone.
+"""
+function dynmat_gamma(ifc::AmorphousIFC2, crystal::CrystalStructure)
+    na = ifc.na
+    nb = 3 * na
+    
+    @assert na == length(crystal) "IFC has $(na) atoms but crystal has $(length(crystal))"
+    
+    # Get dense force constant matrix
+    Φ = Matrix(ifc)
+    
+    # Mass-weight: D_ij,αβ = Φ_ij,αβ / sqrt(m_i * m_j)
+    D = similar(Φ)
+    @inbounds for i in 1:na
+        w_i = crystal.invsqrtm[i]
+        ri = 3*(i-1)
+        for j in 1:na
+            w_ij = w_i * crystal.invsqrtm[j]
+            rj = 3*(j-1)
+            for α in 1:3
+                for β in 1:3
+                    D[ri+α, rj+β] = Φ[ri+α, rj+β] * w_ij
+                end
+            end
+        end
+    end
+    
+    return Hermitian(D)
+end
+
 function dynmat_q(
         fc_uc::IFC2,
         uc::CrystalStructure,

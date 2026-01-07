@@ -1,6 +1,6 @@
 using Test
 using TDEP_IFCs
-
+using LinearALgebra
 
 data_dir = abspath(joinpath(@__DIR__, "..", "data"))
 
@@ -174,6 +174,105 @@ end
     F = ThermodynmicIntegration(
         ifc2, sc, uc, settings
     )
+
+end
+
+@testset "Fit Amorphous" begin
+
+
+    # ============ FILL THESE IN ============
+    # poscar_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/aSi/infile.ssposcar"
+    poscar_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/SW/infile.ssposcar"
+    # positions_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/aSi/infile.positions"
+    positions_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/SW/1300K_3UC/infile.positions"
+    # forces_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/aSi/infile.forces"
+    forces_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/SW/1300K_3UC/infile.forces"
+    n_timesteps = 1000 #300  # number of MD snapshots
+    r_cut_angstrom = 4.0  # cutoff in Angstrom
+    # =======================================
+
+    # Convert cutoff to bohr (internal units)
+    r_cut = r_cut_angstrom * LatticeDynamicsToolkit.A_to_bohr
+
+    # Load structure (skip symmetry analysis for amorphous)
+    println("Loading structure...")
+    crystal = CrystalStructure(poscar_path; compute_symmetry=false)
+    na = length(crystal)
+    println("  Atoms: $na")
+
+    # Read MD data
+    println("Reading positions and forces...")
+    positions = read_positions(positions_path, crystal, n_timesteps)
+    forces = read_forces(forces_path, na, n_timesteps)
+    println("  Positions shape: $(size(positions))")
+    println("  Forces shape: $(size(forces))")
+
+    # Fit IFCs
+    println("\nFitting IFCs...")
+    ifc = fit_ifc2(crystal, positions, forces; r_cut=r_cut, λ=1e-6)
+    println(ifc)
+
+    # Convert to dense matrix
+    println("\nConverting to dense matrix...")
+    Φ = Matrix(ifc)
+    println("  Matrix size: $(size(Φ))")
+
+    # ============ VERIFICATION TESTS ============
+
+    println("\n=== Verification Tests ===")
+
+    # Test 1: Check symmetry (Φ should equal Φ^T)
+    symmetry_error = maximum(abs.(Φ - Φ'))
+    println("1. Symmetry check: max|Φ - Φ^T| = $(symmetry_error)")
+    println("   ", symmetry_error < 1e-10 ? "✓ PASSED" : "✗ FAILED")
+
+    # Test 2: Check ASR (row sums should be zero)
+    # For each atom i, sum over all j: Σ_j Φ_ij = 0
+    asr_errors = Float64[]
+    for i in 1:na
+        for α in 1:3
+            row = 3*(i-1) + α
+            row_sum = sum(Φ[row, :])
+            push!(asr_errors, abs(row_sum))
+        end
+    end
+    max_asr_error = maximum(asr_errors)
+    println("2. ASR check: max|Σ_j Φ_ij| = $(max_asr_error)")
+    println("   ", max_asr_error < 1e-10 ? "✓ PASSED" : "✗ FAILED")
+
+    # Test 3: Check block-wise symmetry Φ_ij = Φ_ji^T (Newton's 3rd law)
+    block_sym_errors = Float64[]
+    for i in 1:na
+        ri = 3*(i-1)
+        for j in i+1:na
+            rj = 3*(j-1)
+            Φ_ij = Φ[ri+1:ri+3, rj+1:rj+3]
+            Φ_ji = Φ[rj+1:rj+3, ri+1:ri+3]
+            push!(block_sym_errors, maximum(abs.(Φ_ij - Φ_ji')))
+        end
+    end
+    if !isempty(block_sym_errors)
+        max_block_sym = maximum(block_sym_errors)
+        println("3. Newton's 3rd law: max|Φ_ij - Φ_ji^T| = $(max_block_sym)")
+        println("   ", max_block_sym < 1e-10 ? "✓ PASSED" : "✗ FAILED")
+    end
+
+    # Test 4: Eigenvalue check (should have 3 zero modes for translations)
+    println("\n4. Eigenvalue analysis...")
+    eigenvalues, _ = eigen(Symmetric(Φ))
+    sorted_eigs = sort(eigenvalues)
+    println("   3 smallest eigenvalues: $(sorted_eigs[1:3])")
+    println("   3 largest eigenvalues: $(sorted_eigs[end-2:end])")
+    n_negative = count(x -> x < -1e-8, eigenvalues)
+    println("   Negative eigenvalues: $n_negative")
+
+    # Test 5: Compute force prediction error on training data
+    println("\n5. Force prediction quality...")
+    u_flat = vec(positions .- repeat(hcat(crystal.x_cart...), 1, n_timesteps))
+    F_pred = -Φ * u_flat  # F = -Φ·u (note: this ignores PBC wrapping, just approximate)
+    F_actual = vec(forces)
+    # This is approximate since we're not doing proper PBC wrapping here
+    println("   (Note: approximate check, fitting used proper PBC)")
 
 end
 
