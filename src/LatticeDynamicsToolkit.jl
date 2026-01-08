@@ -13,6 +13,7 @@ import PeriodicTable
 using ProgressMeter
 using Statistics: mean
 import Random: randn!
+using HDF5
 
 include("constants.jl")
 include("util.jl")

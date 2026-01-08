@@ -100,7 +100,30 @@ function harmonic_properties(
     return harmonic_properties(Float64(T), ω, L)
 end
 
+function harmonic_properties(
+    T::Real,
+    ifc2_matrix::Matrix,
+    sc::CrystalStructure,
+    ::Type{L}
+) where {L <: Limit}
 
+    na = length(sc)
+    nb = 3*na
+
+    @assert na == size(ifc2_matrix, 1) "IFC matrix has $(size(ifc2_matrix, 1)) atoms, but supercell has $(na) atoms"
+    @assert nb == size(ifc2_matrix, 2) "IFC matrix has $(size(ifc2_matrix, 2)) atoms, but supercell has $(nb) atoms"
+
+    D = _mass_weight_ifc2_matrix_gamma(ifc2_matrix, sc)
+
+    # Get eigenvalues (ω²) - gamma point sets 3 translational modes to 0
+    ω², _ = get_modes(D, Val{true}())
+     
+    # Convert to frequencies: ω = sign(ω²) * sqrt(|ω²|)
+    # Negative ω² → imaginary frequency (reported as negative)
+    ω = negsqrt.(ω²)
+
+   return harmonic_properties(Float64(T), ω, L)
+end
 
 
 function sum_over_freqs(freqs, f::Function; kwargs...)

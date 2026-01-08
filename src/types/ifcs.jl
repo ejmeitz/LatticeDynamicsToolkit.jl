@@ -107,6 +107,7 @@ end
 Base.show(io::IO, ifc::AmorphousIFC2) =
     print(io, "Amorphous 2nd Order IFCs, cutoff = $(round(ifc.r_cut*bohr_to_A, digits = 5)) Ang, $(ifc.na) atoms")
 
+get_kwarg(::AmorphousIFC2) = :ifc2
 
 ####################################
 # Dense Matrix Conversion Methods  #

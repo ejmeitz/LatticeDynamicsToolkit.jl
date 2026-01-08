@@ -1,4 +1,5 @@
-export read_ifc2, read_ifc3, read_ifc4
+export read_ifc2, read_ifc3, read_ifc4,
+       write_ifc2, read_amorphous_ifc2_matrix
 
 
 """
@@ -357,4 +358,65 @@ function read_forces(path::String, na::Int, n_timesteps::Int)
     end
     
     return forces
+end
+
+"""
+    write_amorphous_ifc2(path::String, ifc2::AmorphousIFC2; compress::Int=5)
+
+Save AmorphousIFC2 to an HDF5 file. Stores the dense 3N×3N force constant matrix
+with deflate compression to efficiently handle sparsity.
+
+# Arguments
+- `path`: Output HDF5 file path
+- `ifc2`: AmorphousIFC2 to save
+- `compress`: Compression level 0-9 (0=none, 9=max, default=5)
+
+# Stored datasets
+- `force_constants`: 3N×3N dense matrix (Hartree/bohr²)
+- `na`: Number of atoms
+- `r_cut`: Cutoff radius (bohr)
+"""
+function write_ifc2(path::String, ifc2::AmorphousIFC2; compress::Int=5)
+    Φ = Matrix(ifc2)
+    
+    h5open(path, "w") do f
+        # Chunked + compressed dataset for the force constant matrix
+        # Chunk size chosen for good compression of sparse-ish matrices
+        n = size(Φ, 1)
+        chunk_size = min(n, 256)  # reasonable chunk for most systems
+        
+        d = create_dataset(f, "ifc2", Float64, (n, n);
+                          chunk=(chunk_size, chunk_size),
+                          compress=compress)
+        d[:, :] = Φ
+        
+        # Metadata
+        f["na"] = ifc2.na
+        f["r_cut"] = ifc2.r_cut
+        
+        # Store units as attributes for clarity
+        attrs(f)["units_ifc2"] = "Hartree/bohr^2"
+        attrs(f)["units_r_cut"] = "bohr"
+    end
+    
+    return nothing
+end
+
+"""
+    read_amorphous_ifc2_matrix(path::String) -> (Matrix{Float64}, Int, Float64)
+
+Read a dense force constant matrix from an HDF5 file saved by `write_amorphous_ifc2`.
+
+# Returns
+- `Φ`: 3N×3N force constant matrix (Hartree/bohr²)
+- `na`: Number of atoms
+- `r_cut`: Cutoff radius (bohr)
+"""
+function read_ifc2_matrix(path::String)
+    h5open(path, "r") do f
+        Φ = read(f["ifc2"])
+        na = read(f["na"])
+        r_cut = read(f["r_cut"])
+        return Φ, na, r_cut
+    end
 end

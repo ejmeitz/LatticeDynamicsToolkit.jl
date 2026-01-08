@@ -60,20 +60,23 @@ translational symmetry / Brillouin zone.
 """
 function dynmat_gamma(ifc::AmorphousIFC2, crystal::CrystalStructure)
     na = ifc.na
-    nb = 3 * na
     
     @assert na == length(crystal) "IFC has $(na) atoms but crystal has $(length(crystal))"
     
     # Get dense force constant matrix
     Φ = Matrix(ifc)
     
-    # Mass-weight: D_ij,αβ = Φ_ij,αβ / sqrt(m_i * m_j)
-    D = similar(Φ)
+    return _mass_weight_ifc2_matrix_gamma(Φ, sc)
+end
+
+function _mass_weight_ifc2_matrix_gamma(Φ::AbstractMatrix, sc::CrystalStructure)
+    na = length(sc)
+
     @inbounds for i in 1:na
-        w_i = crystal.invsqrtm[i]
+        w_i = sc.invsqrtm[i]
         ri = 3*(i-1)
         for j in 1:na
-            w_ij = w_i * crystal.invsqrtm[j]
+            w_ij = w_i * sc.invsqrtm[j]
             rj = 3*(j-1)
             for α in 1:3
                 for β in 1:3
