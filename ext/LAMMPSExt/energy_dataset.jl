@@ -13,7 +13,7 @@ function LatticeDynamicsToolkit.make_energy_dataset(
 
     valid_ifcs = Iterators.filter(!isnothing, (ifc2, ifc3, ifc4))
 
-    if isa(ifc2, AmorphousIFC2) && length(valid_ifcs) != 1
+    if isa(ifc2, AmorphousIFC2) && (ifc3 !== nothing || ifc4 !== nothing)
         error(ArgumentError("Does not make sense to use AmorphousIFC2 with other higher order IFCs to build energy dataset"))
     end
     
