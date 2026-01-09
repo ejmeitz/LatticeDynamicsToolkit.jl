@@ -119,19 +119,65 @@ function energies(
     return e2, e3, e4
 end
 
+function energies(
+    u::AbstractVector{SVector{3,Float64}},
+    fc2::AmorphousIFC2;
+    fc3::Nothing = nothing,
+    fc4::Nothing = nothing,
+    n_threads::Integer = Threads.nthreads()
+)
+
+    na = length(u)
+
+    maybe_check_na(i::Union{<:IFCs, Nothing}, na_true) = isnothing(i) ? true : na_true == i.na 
+
+    if !all(maybe_check_na(fc2, na))
+        throw(ArgumentError("Displacements have $(na) atoms, but passed IFCs are built from different size cell. IFCs should be remapped to the supercell."))
+    end
+
+    e2 = @tasks for a1 in 1:na
+
+        @set begin
+            ntasks  = n_threads
+            reducer = +
+            scheduler = :static
+        end
+
+        @local v0 = MVector{3,Float64}(0,0,0)
+
+        
+        v0 .= 0.0
+        for pair in get_interactions(fc2, a1)
+            a2  = pair.idxs[2]
+            mul!(v0, pair.ifcs, u[a2], 1.0, 1.0)
+        end
+
+        dot(u[a1], v0)
+    end
+
+    e2 *= 0.5
+
+
+    return e2, 0.0, 0.0
+end
+
 # Generate canonical_configrations and caluclate their energies from the Taylor series.
 # Assumes IFCs are from unitcell if sc is passed
 function make_energy_dataset(
         cc_settings::ConfigSettings,
         uc::CrystalStructure,
         sc::CrystalStructure;
-        ifc2::IFC2, # required, but pass as kwarg
+        ifc2::Union{IFC2, AmorphousIFC2}, # required, but pass as kwarg
         ifc3::Union{Nothing, IFC3} = nothing,
         ifc4::Union{Nothing, IFC4} = nothing,
         n_threads::Integer = Threads.nthreads()
     )
 
     valid_ifcs = Iterators.filter(!isnothing, (ifc2, ifc3, ifc4))
+
+    if isa(ifc2, AmorphousIFC2) && length(valid_ifcs) != 1
+        error(ArgumentError("Does not make sense to use AmorphousIFC2 with other higher order IFCs to build energy dataset"))
+    end
     
     @info "Remapping IFCs to Supercell"
     valid_ifcs_remapped = remap(sc, uc, valid_ifcs...)
@@ -145,7 +191,7 @@ end
 function _make_energy_dataset(
     cc_settings::ConfigSettings,
     sc::CrystalStructure;
-    ifc2::IFC2,
+    ifc2::Union{IFC2, AmorphousIFC2},
     ifc3::Union{Nothing, IFC3} = nothing,
     ifc4::Union{Nothing, IFC4} = nothing,
     n_threads::Integer = Threads.nthreads()
@@ -155,7 +201,7 @@ function _make_energy_dataset(
     remap_checks(sc, valid_ifcs...)
 
     dynmat = dynmat_gamma(ifc2, sc)
-    freqs_sq, phi = get_modes(dynmat)
+    freqs_sq, phi = get_modes(dynmat, Val{true}())
     freqs = sqrt.(freqs_sq)  # Will error for negative frequencies which I am ok with
 
     tep_energies = zeros(SVector{3, Float64}, cc_settings.n_configs)

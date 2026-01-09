@@ -5,13 +5,17 @@ function LatticeDynamicsToolkit.make_energy_dataset(
         uc::CrystalStructure,
         sc::CrystalStructure,
         make_calc::Function;
-        ifc2::IFC2, # required, but pass as kwarg
+        ifc2::Union{IFC2, AmorphousIFC2}, # required, but pass as kwarg
         ifc3::Union{Nothing, IFC3} = nothing,
         ifc4::Union{Nothing, IFC4} = nothing,
         n_threads::Integer = Threads.nthreads()
     )
 
     valid_ifcs = Iterators.filter(!isnothing, (ifc2, ifc3, ifc4))
+
+    if isa(ifc2, AmorphousIFC2) && length(valid_ifcs) != 1
+        error(ArgumentError("Does not make sense to use AmorphousIFC2 with other higher order IFCs to build energy dataset"))
+    end
     
     @info "Remapping IFCs to Supercell"
     valid_ifcs_remapped = remap(sc, uc, valid_ifcs...)
@@ -21,26 +25,13 @@ function LatticeDynamicsToolkit.make_energy_dataset(
                                  n_threads = n_threads)
 end
 
-function LatticeDynamicsToolkit.make_energy_dataset(
-    cc_settings::ConfigSettings,
-    uc::CrystalStructure, # unused but so multiple dispatch works better
-    sc::CrystalStructure,
-    make_calc::Function;
-    ifc2::AmorphousIFC2, # required, but pass as kwarg
-    n_threads::Integer = Threads.nthreads()
-)
-
-    return _make_energy_dataset(cc_settings, sc, make_calc;
-                         ifc2=ifc2, n_threads = n_threads...)
-end
-
 #Assumes IFCs are supercell already
 # Comptue true energy given `calc` via AtomsCalculators
 function _make_energy_dataset(
     cc_settings::ConfigSettings,
     sc::CrystalStructure,
     make_calc::Function;
-    ifc2::IFC2,
+    ifc2::Union{IFC2, AmorphousIFC2},
     ifc3::Union{Nothing, IFC3} = nothing,
     ifc4::Union{Nothing, IFC4} = nothing,
     n_threads::Integer = Threads.nthreads()

@@ -35,6 +35,15 @@ function remap_checks(
 end
 
 function remap(
+    fc::AmorphousIFC2,
+    sc::CrystalStructure,
+    s2u::AbstractVector{Int};
+)
+    @assert fc.na == length(sc) "Cannot remap AmorphousIFC2 to a different size cell."
+    return fc
+end
+
+function remap(
     fc::IFC2,
     sc::CrystalStructure,
     s2u::AbstractVector{Int};

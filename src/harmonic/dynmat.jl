@@ -71,6 +71,7 @@ end
 
 function _mass_weight_ifc2_matrix_gamma(Φ::AbstractMatrix, sc::CrystalStructure)
     na = length(sc)
+    D = zeros(eltype(Φ), size(Φ))
 
     @inbounds for i in 1:na
         w_i = sc.invsqrtm[i]

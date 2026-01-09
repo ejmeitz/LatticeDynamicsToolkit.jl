@@ -102,6 +102,15 @@ end
 
 function harmonic_properties(
     T::Real,
+    ifc2_dense::DenseIFC2,
+    sc::CrystalStructure,
+    ::Type{L}
+) where {L <: Limit}
+    return harmonic_properties(Float64(T), ifc2_dense.ifcs, sc, L)
+end
+
+function harmonic_properties(
+    T::Real,
     ifc2_matrix::Matrix,
     sc::CrystalStructure,
     ::Type{L}
@@ -110,8 +119,7 @@ function harmonic_properties(
     na = length(sc)
     nb = 3*na
 
-    @assert na == size(ifc2_matrix, 1) "IFC matrix has $(size(ifc2_matrix, 1)) atoms, but supercell has $(na) atoms"
-    @assert nb == size(ifc2_matrix, 2) "IFC matrix has $(size(ifc2_matrix, 2)) atoms, but supercell has $(nb) atoms"
+    @assert nb == size(ifc2_matrix, 1) "IFC matrix has size $(size(ifc2_matrix, 2)), but supercell has $(nb) DoFs"
 
     D = _mass_weight_ifc2_matrix_gamma(ifc2_matrix, sc)
 

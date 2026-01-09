@@ -1,8 +1,9 @@
 export 
     IFC2, IFC3, IFC4,
-    AmorphousIFC2
+    AmorphousIFC2, DenseIFC2
 
 abstract type IFCs end
+abstract type AmorphousIFCs <: IFCs end
 
 # mimics the lo_fc2_pair type
 struct FC2Data 
@@ -97,7 +98,7 @@ Unlike `IFC2`, this type stores force constants for ALL atom pairs (no translati
 - Φ_ji = Φ_ij^T by Newton's 3rd law (enforced during fitting)
 - Diagonal blocks Φ_ii are computed from ASR: Φ_ii = -Σ_{j≠i} Φ_ij
 """
-struct AmorphousIFC2
+struct AmorphousIFC2 <: AmorphousIFCs
     na::Int
     r_cut::Float64
     neighbors::Vector{Vector{Int}}
@@ -108,6 +109,67 @@ Base.show(io::IO, ifc::AmorphousIFC2) =
     print(io, "Amorphous 2nd Order IFCs, cutoff = $(round(ifc.r_cut*bohr_to_A, digits = 5)) Ang, $(ifc.na) atoms")
 
 get_kwarg(::AmorphousIFC2) = :ifc2
+
+struct DenseIFC2
+    ifcs::Matrix{Float64}
+    na::Int
+    r_cut::Float64
+end
+
+function DenseIFC2(ifc2::AmorphousIFC2)
+    return DenseIFC2(Matrix(ifc2), ifc2.na, ifc2.r_cut)
+end
+
+function DenseIFC2(ifc2::IFC2)
+    return DenseIFC2(Matrix(ifc2), ifc2.na, ifc2.r_cut)
+end
+
+"""
+    AmorphousIFC2(dense::DenseIFC2; tol=1e-14) -> AmorphousIFC2
+
+Convert a DenseIFC2 back to sparse AmorphousIFC2 format by extracting non-zero 
+off-diagonal blocks.
+
+# Arguments
+- `dense`: DenseIFC2 containing the full force constant matrix
+- `tol`: Threshold for considering a block as non-zero (default 1e-14)
+
+# Notes
+- Only upper-triangle blocks (i < j) with `norm(Φ_ij) > tol` are stored
+- Diagonal blocks are not stored (recomputed via ASR when needed)
+"""
+function AmorphousIFC2(dense::DenseIFC2; tol::Float64=1e-13)
+    Φ = dense.ifcs
+    na = dense.na
+    r_cut = dense.r_cut
+    
+    @assert size(Φ) == (3*na, 3*na) "Matrix size must be (3na, 3na)"
+    
+    neighbors = [Int[] for _ in 1:na]
+    blocks = [SMatrix{3,3,Float64,9}[] for _ in 1:na]
+    
+    # Extract upper-triangle off-diagonal blocks
+    @inbounds for i in 1:na
+        ri = 3*(i-1)
+        for j in (i+1):na
+            rj = 3*(j-1)
+            # Extract the 3×3 block Φ_ij
+            block = SMatrix{3,3,Float64,9}(
+                Φ[ri+1, rj+1], Φ[ri+2, rj+1], Φ[ri+3, rj+1],
+                Φ[ri+1, rj+2], Φ[ri+2, rj+2], Φ[ri+3, rj+2],
+                Φ[ri+1, rj+3], Φ[ri+2, rj+3], Φ[ri+3, rj+3]
+            )
+            
+            # Store if non-zero
+            if norm(block) > tol
+                push!(neighbors[i], j)
+                push!(blocks[i], block)
+            end
+        end
+    end
+    
+    return AmorphousIFC2(na, r_cut, neighbors, blocks)
+end
 
 ####################################
 # Dense Matrix Conversion Methods  #
