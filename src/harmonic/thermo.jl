@@ -111,6 +111,15 @@ end
 
 function harmonic_properties(
     T::Real,
+    ifc2::AmorphousIFC2,
+    sc::CrystalStructure,
+    ::Type{L}
+) where {L <: Limit}
+    return harmonic_properties(Float64(T), Matrix(ifc2), sc, L)
+end
+
+function harmonic_properties(
+    T::Real,
     ifc2_matrix::Matrix,
     sc::CrystalStructure,
     ::Type{L}
