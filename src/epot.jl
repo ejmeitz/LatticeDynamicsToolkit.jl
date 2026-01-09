@@ -126,40 +126,41 @@ function energies(
     fc4::Nothing = nothing,
     n_threads::Integer = Threads.nthreads()
 )
-
     na = length(u)
-
-    maybe_check_na(i::Union{<:IFCs, Nothing}, na_true) = isnothing(i) ? true : na_true == i.na 
-
-    if !all(maybe_check_na(fc2, na))
-        throw(ArgumentError("Displacements have $(na) atoms, but passed IFCs are built from different size cell. IFCs should be remapped to the supercell."))
+    
+    if fc2.na != na
+        throw(ArgumentError("Displacements have $(na) atoms, but IFC2 has $(fc2.na) atoms."))
     end
-
-    e2 = @tasks for a1 in 1:na
-
-        @set begin
-            ntasks  = n_threads
-            reducer = +
-            scheduler = :static
+    
+    # Compute E = 0.5 * u' * Φ * u directly without allocations
+    # For each stored pair (i < j):
+    #   - Off-diagonal: 2 * u_i' * Φ_ij * u_j (factor 2 for lower triangle symmetry)
+    #   - Diagonal (ASR: Φ_ii = -Σ_j Φ_ij): -u_i' * Φ_ij * u_i - u_j' * Φ_ij' * u_j
+    # All SMatrix/SVector ops are stack-allocated (no heap allocations)
+    
+    e2 = 0.0
+    
+    @inbounds for i in 1:na
+        u_i = u[i]
+        for (k, j) in enumerate(fc2.neighbors[i])
+            Φ_ij = fc2.blocks[i][k]
+            u_j = u[j]
+            
+            # Off-diagonal contribution (×2 for symmetry with lower triangle)
+            e2 += 2.0 * dot(u_i, Φ_ij * u_j)
+            
+            # Diagonal contributions from ASR (Φ_ii = -Σ_{j≠i} Φ_ij)
+            e2 -= dot(u_i, Φ_ij * u_i)      # contribution to Φ_ii
+            e2 -= dot(u_j, Φ_ij' * u_j)     # contribution to Φ_jj
         end
-
-        @local v0 = MVector{3,Float64}(0,0,0)
-
-        
-        v0 .= 0.0
-        for pair in get_interactions(fc2, a1)
-            a2  = pair.idxs[2]
-            mul!(v0, pair.ifcs, u[a2], 1.0, 1.0)
-        end
-
-        dot(u[a1], v0)
     end
-
+    
     e2 *= 0.5
-
-
+    
     return e2, 0.0, 0.0
 end
+
+
 
 # Generate canonical_configrations and caluclate their energies from the Taylor series.
 # Assumes IFCs are from unitcell if sc is passed
@@ -175,8 +176,8 @@ function make_energy_dataset(
 
     valid_ifcs = Iterators.filter(!isnothing, (ifc2, ifc3, ifc4))
 
-    if isa(ifc2, AmorphousIFC2) && length(valid_ifcs) != 1
-        error(ArgumentError("Does not make sense to use AmorphousIFC2 with other higher order IFCs to build energy dataset"))
+    if isa(ifc2, AmorphousIFC2) && (ifc3 !== nothing || ifc4 !== nothing)
+        error(ArgumentError("Does not make sense to use AmorphousIFC2 with higher order IFCs to build energy dataset"))
     end
     
     @info "Remapping IFCs to Supercell"
