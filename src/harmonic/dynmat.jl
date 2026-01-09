@@ -58,10 +58,10 @@ The dynamical matrix is: D_ij,αβ = Φ_ij,αβ / sqrt(m_i * m_j)
 For amorphous systems, only the gamma point is meaningful since there's no 
 translational symmetry / Brillouin zone.
 """
-function dynmat_gamma(ifc::AmorphousIFC2, crystal::CrystalStructure)
+function dynmat_gamma(ifc::AmorphousIFC2, sc::CrystalStructure)
     na = ifc.na
     
-    @assert na == length(crystal) "IFC has $(na) atoms but crystal has $(length(crystal))"
+    @assert na == length(sc) "IFC has $(na) atoms but crystal has $(length(sc))"
     
     # Get dense force constant matrix
     Φ = Matrix(ifc)
