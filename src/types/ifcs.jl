@@ -116,8 +116,6 @@ struct DenseIFC2
     r_cut::Float64
 end
 
-get_kwarg(::DenseIFC2) = :ifc2
-
 function DenseIFC2(ifc2::AmorphousIFC2)
     return DenseIFC2(Matrix(ifc2), ifc2.na, ifc2.r_cut)
 end

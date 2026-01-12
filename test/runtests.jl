@@ -181,14 +181,14 @@ end
 
 
     # ============ FILL THESE IN ============
-    # poscar_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/aSi/infile.ssposcar"
-    poscar_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/SW/infile.ssposcar"
-    # positions_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/aSi/infile.positions"
-    positions_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/SW/1300K_3UC/infile.positions"
-    # forces_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/aSi/infile.forces"
-    forces_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/SW/1300K_3UC/infile.forces"
-    n_timesteps = 1000 #300  # number of MD snapshots
-    r_cut_angstrom = 4.0  # cutoff in Angstrom
+    poscar_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/aSi/infile.ssposcar"
+    # poscar_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/SW/infile.ssposcar"
+    positions_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/aSi/infile.positions"
+    # positions_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/SW/1300K_3UC/infile.positions"
+    forces_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/aSi/infile.forces"
+    # forces_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/SW/1300K_3UC/infile.forces"
+    n_timesteps = 300 #300  # number of MD snapshots
+    r_cut_angstrom = 6.0  # cutoff in Angstrom
     # =======================================
 
     # Convert cutoff to bohr (internal units)
@@ -217,9 +217,7 @@ end
     Φ = Matrix(ifc)
     println("  Matrix size: $(size(Φ))")
 
-    # ============ VERIFICATION TESTS ============
-
-    println("\n=== Verification Tests ===")
+    # ============ TESTS ============
 
     # Test 1: Check symmetry (Φ should equal Φ^T)
     symmetry_error = maximum(abs.(Φ - Φ'))
@@ -265,17 +263,46 @@ end
     println("   3 largest eigenvalues: $(sorted_eigs[end-2:end])")
     n_negative = count(x -> x < -1e-8, eigenvalues)
     println("   Negative eigenvalues: $n_negative")
-
-    # Test 5: Compute force prediction error on training data
-    println("\n5. Force prediction quality...")
-    u_flat = vec(positions .- repeat(hcat(crystal.x_cart...), 1, n_timesteps))
-    F_pred = -Φ * u_flat  # F = -Φ·u (note: this ignores PBC wrapping, just approximate)
-    F_actual = vec(forces)
-    # This is approximate since we're not doing proper PBC wrapping here
-    println("   (Note: approximate check, fitting used proper PBC)")
-
 end
 
+@testset "TEP Energy Consistency" begin
+
+    # Load crystalline silicion IFCs and calculate energy of equilibrium structure
+    # Convert those crystalline IFCs to AmorphousIFC2 and calcaulte same energy
+
+    ifc_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/SW/1300K_3UC/infile.forceconstant"
+    ssposcar_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/SW/infile.ssposcar"
+    ucposcar_path = "C:/Users/ejmei/repos/TDEP_IFCs.jl/data/SW/infile.ucposcar"
+
+    ifc2 = read_ifc2(ifc_path, ucposcar_path)
+    ifc2_sc = remap(sc, uc, ifc2)[1]
+    sc = CrystalStructure(ssposcar_path)
+    uc = CrystalStructure(ucposcar_path)
+
+    
+    dynmat = dynmat_gamma(ifc2_sc, sc)
+    freqs_sq, phi = get_modes(dynmat, Val{true}())
+    freqs = sqrt.(freqs_sq)
+
+    settings = ConfigSettings(4, 1300.0, Classical)
+    u = canonical_configs(settings, freqs, phi, sc.m)
+
+    e2_true = map(eachcol(u)) do u_flat
+        u_svec = reinterpret(SVector{3, Float64}, u_flat)
+        energies(u_svec, ifc2_sc)[1]
+    end
+
+    dense_ifc2 = DenseIFC2(ifc2_sc, sc)
+    amorphous_ifc2 = AmorphousIFC2(dense_ifc2)
+
+    e2_test = map(eachcol(u)) do u_flat
+        u_svec = reinterpret(SVector{3, Float64}, u_flat)
+        energies(u_svec, amorphous_ifc2)[1]
+    end
+
+    @test e2_true ≈ e2_test
+
+end
 
 
     # ifc2_remapped = remap(sc, uc, ifc2)[1]

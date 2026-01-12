@@ -14,6 +14,7 @@ using ProgressMeter
 using Statistics: mean
 import Random: randn!
 using HDF5
+using KrylovKit
 
 include("constants.jl")
 include("util.jl")
