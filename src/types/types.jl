@@ -84,6 +84,31 @@ function CrystalStructure(poscar_path::String; symprec::Float64 = 1e-5, compute_
     return CrystalStructure(x_frac, x_cart, species, m, invsqrtm, cell, cell_inv, sym_data)
 end
 
+function CrystalStructure(
+        x_cart_bohr::AbstractVector,
+        species::AbstractVector,
+        m_emu::AbstractVector,
+        cell_bohr::AbstractMatrix;
+        symprec::Float64 = 1e-5,
+        compute_symmetry::Bool = false
+    )
+
+    x_frac = to_frac_coords.(Ref(cell_bohr), x_cart_bohr)
+    invsqrtm = 1.0 ./ sqrt.(m_emu)
+    cell_inv = inv(cell_bohr)
+
+    sym_data = nothing
+    if compute_symmetry
+        spglib_cell = Spglib.SpglibCell(
+            cell,
+            x_frac,
+            atomic_number.(species)
+        )
+        sym_data = Spglib.get_dataset(spglib_cell, symprec)
+    end
+
+    return CrystalStructure(x_frac, x_cart_bohr, species, m_emu, invsqrtm, cell_bohr, cell_inv, sym_data)
+end
 
 volume(cs::CrystalStructure) = det(cs.L)
 

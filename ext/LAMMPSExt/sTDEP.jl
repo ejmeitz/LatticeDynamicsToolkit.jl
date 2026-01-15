@@ -2,8 +2,8 @@ export sTDEP
 
 """
     sTDEP(
-        sys::AbstractSystem{3},
-        calc,
+        sys::CrystalStructure,
+        calc::LAMMPSCalculator,
         basedir::String,
         niter::Integer,
         nconf::Union{Integer, AbstractVector{Integer}},
@@ -18,13 +18,12 @@ export sTDEP
 Calculates force constants self-consistently by sampling configurations from the canonical ensemble,
 fitting force constants and iterating until convergence. 
 
-This function is written to take in any `AbstractSystem` from the AtomsBase interface and any force calculator
-from the AtomsCalculators interface. This means you can create systems using ASE, SimpleCrystals etc. and
-use Molly.jl, DFTK.jl, ASEconvert.jl etc. to calculate forces.
+This function is written to take in any `CrystalStructure` from the LatticeDynamicsToolkit interface and any force calculator
+from the LAMMPSCalculator interface.
 
 # Arguments:
-- `sys` : AbstractSystem containing at a minimum the positions and cell definition.
-- `calc` : Force calculator (e.g. DFTKCalculator, MollyCalculator, ASECalculator)
+- `sys` : CrystalStructure containing at a minimum the positions and cell definition.
+- `calc` : LAMMPSCalculator
 - `basedir::String` : Directory where all output files are written
 - `niter::Integer` : Number of self-consistent iterations to perform. Includes iter to initialize from freuency.
 - `nconf` : If Integer, the number of configurations to generate. If list of integers, the number
@@ -37,8 +36,8 @@ use Molly.jl, DFTK.jl, ASEconvert.jl etc. to calculate forces.
 - `verbose::Bool = false` : Enable extra printing
 """
 function sTDEP(
-        sys::AbstractSystem{3},
-        calc,
+        sys::CrystalStructure,
+        calc::LAMMPSCalculator,
         basedir::String,
         niter::Integer,
         nconf::Union{Integer, AbstractVector{Integer}},
@@ -52,9 +51,6 @@ function sTDEP(
     #* Add pre-conditioning ?
 
     @assert isfile(joinpath(basedir, "infile.ucposcar")) "sTDEP requires an infile.ucposcar in $(basedir)"
-    @assert AtomsCalculators.length_unit(calc) == u"Å" "Expected angstroms as length unit got $(AtomsCalculators.length_unit(calc))"
-    @assert AtomsCalculators.energy_unit(calc) == u"eV" "Expected eV as energy unit got $(AtomsCalculators.energy_unit(calc))"
-    @assert all(periodicity(cell(sys))) "Must be periodic system"
 
     if typeof(nconf) <: AbstractVector
         @assert length(nconf) == niter "Length of config list, $(length(nconf)) does not match niter: $(niter)"
@@ -63,8 +59,7 @@ function sTDEP(
     end
 
     # Make ssposcar
-    cv = hcat(AtomsBase.cell_vectors(sys)...)
-    write_ssposcar(basedir, cv, AtomsBase.position(sys, :), Symbol.(AtomsBase.atomic_symbol(sys, :)))
+    write_ssposcar(basedir, sys.L, sys.x_frac, sys.species)
 
     get_path = (i) -> joinpath(basedir, "iter$(lpad(i,3,'0'))")
 
@@ -78,12 +73,15 @@ function sTDEP(
     cp(joinpath(basedir, "infile.ssposcar"), joinpath(init_dir, "infile.ssposcar"))
     cp(joinpath(basedir, "infile.ucposcar"), joinpath(init_dir, "infile.ucposcar"))
 
+    # My config code does not support the max-freuqency option
+    # So we will use TDEP to generate the configurations
     cc_init = CanonicalConfiguration(
         temperature = temperature,
         nconf = nconf[1],
         quantum = quantum, 
         maximum_frequency = maximum_frequency
     )
+
     generate_configs(sys, cc_init, calc, init_dir, verbose)
 
     # Generate remaining configurations with IFCs from prior iteration
@@ -120,47 +118,38 @@ function prepare_next_dir(current_dir, dest_dir, init_pass::Bool = false)
     end
 end
 
-function generate_configs(sys::AbstractSystem{3}, cc::CanonicalConfiguration, 
-                            calc, outdir::String, verbose::Bool)
+function generate_configs(
+        sys::CrystalStructure,
+        cc::CanonicalConfiguration, 
+        calc::LAMMPSCalculator,
+        outdir::String,
+        verbose::Bool
+    )
 
     @info "Generating Configurations"
     execute(cc, outdir, 1, verbose)
 
     get_filepath = (i) -> joinpath(outdir, "contcar_conf$(lpad(i, 4, '0'))")
 
-    E_units = (AtomsCalculators.energy_unit(calc) == NoUnits) ? NoUnits : u"eV"
-    F_units = (E_units == NoUnits) ? NoUnits : u"eV / Å"
-
     # Parse coordinates into sys object and calculate forces
     p = Progress(cc.nconf, desc = "Calculating Forces")
     for i in 1:cc.nconf
         filepath = get_filepath(i)
-        x_cart, cell_vec = read_poscar_positions(filepath, n_atoms = length(sys))
-        cell_vec = cell_vec * u"Å"
-       
-        # Construct AtomsBase.FastSystem object with new positions
-        #* CURRENTLY WILL BREAK FOR LJ w/ Molly + MISSING VELOCITIES
-        fs = FastSystem(
-                AtomsBase.cell(sys),
-                x_cart,
-                AtomsBase.ChemicalSpecies.(AtomsBase.atomic_symbol(sys, :)), 
-                AtomsBase.mass(sys, :)
-            )
+        x_cart, _ = read_poscar_positions(filepath, n_atoms = length(sys))
 
-        F = AtomsCalculators.forces(fs, calc)
-        PE = uconvert(E_units, AtomsCalculators.potential_energy(fs, calc))
+        PE, F = single_point_forces_and_energy(x_cart, calc)
 
         # Add data to infile.forces
         open(joinpath(outdir, "infile.forces"), "a") do ff
             for j in eachindex(F)
-                @printf ff "%.15f %.15f %.15f\n" ustrip.(F_units, F[j])...
+                @printf ff "%.15f %.15f %.15f\n" F[j]...
             end
         end
 
         # Add data to infile.positions
         open(joinpath(outdir, "infile.positions"), "a") do pf
             for j in eachindex(x_frac)
-                @printf pf "%.15f %.15f %.15f\n" ustrip.(x_frac[j])...
+                @printf pf "%.15f %.15f %.15f\n" x_frac[j]...
             end
         end
 
