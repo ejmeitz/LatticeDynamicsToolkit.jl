@@ -35,7 +35,7 @@ from the LAMMPSCalculator interface.
 - `ncores::Integer = Threads.nthreads()` : Number of cores used by IFC calculation
 - `verbose::Bool = false` : Enable extra printing
 """
-function sTDEP(
+function LatticeDynamicsToolkit.sTDEP(
     sys::CrystalStructure,
     calc::LAMMPSCalculator,
     basedir::String,

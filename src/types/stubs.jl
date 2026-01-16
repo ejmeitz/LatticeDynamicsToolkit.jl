@@ -1,4 +1,4 @@
-export  LAMMPSCalculator, ThermodynmicIntegration, TISettings
+export  LAMMPSCalculator, ThermodynmicIntegration, TISettings, sTDEP
 
 """
     LAMMPSCalculator(
@@ -65,3 +65,5 @@ end
 TODO
 """
 function ThermodynmicIntegration end
+
+function sTDEP end
