@@ -12,6 +12,7 @@ KrylovKit = "0b1a1467-8014-51b9-945f-bf0ae24f4b77"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 OhMyThreads = "67456a42-1dca-4109-a031-0a68de7e3ad5"
 PeriodicTable = "7b2266bf-644c-5ea3-82d8-af4bbd25a884"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
@@ -24,11 +25,11 @@ Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 [weakdeps]
 LAMMPS = "ee2e13b9-eee9-4449-aafa-cfa6a2dbe14d"
 
+[sources]
+TDEP = {rev = "main", url = "https://github.com/ejmeitz/TDEP.jl.git"}
+
 [extensions]
 LAMMPSExt = "LAMMPS"
-
-[sources]
-TDEP = {url="https://github.com/ejmeitz/TDEP.jl.git", rev = "main"}
 
 [compat]
 AtomsBase = "0.5.2"
@@ -36,6 +37,7 @@ AtomsCalculators = "0.2.3"
 HDF5 = "0.17.2"
 KrylovKit = "0.10.2"
 LAMMPS = "0.10"
+Printf = "1.11.0"
 SparseArrays = "1"
 Spglib = "1.0.1"
 Statistics = "1"

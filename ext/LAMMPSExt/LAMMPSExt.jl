@@ -13,6 +13,7 @@ using ProgressMeter
 using CellListMap
 using StaticArrays
 import Random: randn!
+using Printf
 
 include("lammps_calc.jl")
 include("energy_dataset.jl")
