@@ -43,7 +43,7 @@ function sTDEP(
     rc2,
     temperature,
     maximum_frequency;
-    mixing::Bool = true,
+    mix::Bool = true,
     nconf_init::Int = 8,
     max_configs::Int = 512,
     quantum::Bool = false,
@@ -101,9 +101,9 @@ function sTDEP(
 
         outdir = get_path(i)
         # Move IFCs from last iter to current dir
-        prepare_next_dir(get_path(i-1), outdir, mixing, i == 1)
+        prepare_next_dir(get_path(i-1), outdir, mix, i == 1)
         # Generate Configs Given Current IFCs
-        nconf_extra = mixing ? nconf[i-1] : 0
+        nconf_extra = mix ? nconf[i-1] : 0
         generate_configs(sys, cc, calc, outdir, verbose; nconf_extra = nconf_extra)
         # Calculate IFCs to Generate Next Set of Configs
         execute(efc, outdir, ncores, verbose)
@@ -113,7 +113,7 @@ function sTDEP(
 
 end
 
-function prepare_next_dir(current_dir, dest_dir, mixing::Bool, init_pass::Bool = false)
+function prepare_next_dir(current_dir, dest_dir, mix::Bool, init_pass::Bool = false)
     mkdir(dest_dir)
     cp(joinpath(current_dir, "infile.ssposcar"), joinpath(dest_dir, "infile.ssposcar"))
     cp(joinpath(current_dir, "infile.ucposcar"), joinpath(dest_dir, "infile.ucposcar"))
@@ -124,7 +124,7 @@ function prepare_next_dir(current_dir, dest_dir, mixing::Bool, init_pass::Bool =
         cp(joinpath(current_dir, "outfile.forceconstant"), joinpath(dest_dir, "infile.forceconstant"))
     end
 
-    if mixing
+    if mix
         cp(joinpath(currentdir, "infile.positions"), joinpath(dest_dir, "infile.positions"))
         cp(joinpath(currentdir, "infile.forces"), joinpath(dest_dir, "infile.forces"))
         cp(joinpath(currentdir, "infile.stat"), joinpath(dest_dir, "infile.stat"))
