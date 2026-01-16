@@ -64,7 +64,7 @@ function LatticeDynamicsToolkit.sTDEP(
     end
 
     # Make ssposcar
-    write_ssposcar(basedir, sys.L, sys.x_frac, sys.species)
+    write_ssposcar(basedir, sys.L .* bohr_to_A, sys.x_frac, sys.species)
 
     get_path = (i) -> joinpath(basedir, "iter$(lpad(i,3,'0'))")
 
@@ -87,7 +87,7 @@ function LatticeDynamicsToolkit.sTDEP(
         maximum_frequency = maximum_frequency
     )
 
-    generate_configs(sys, cc_init, calc, init_dir, verbose)
+    generate_configs(length(sys), cc_init, calc, init_dir, verbose)
 
     # Generate remaining configurations with IFCs from prior iteration
     for i in 1:(niter - 1)
@@ -103,7 +103,7 @@ function LatticeDynamicsToolkit.sTDEP(
         prepare_next_dir(get_path(i-1), outdir, mix, i == 1)
         # Generate Configs Given Current IFCs
         nconf_extra = mix ? nconf[i-1] : 0
-        generate_configs(sys, cc, calc, outdir, verbose; nconf_extra = nconf_extra)
+        generate_configs(length(sys), cc, calc, outdir, verbose; nconf_extra = nconf_extra)
         # Calculate IFCs to Generate Next Set of Configs
         execute(efc, outdir, ncores, verbose)
         # Generate DOS and Dispersion Data
@@ -131,7 +131,7 @@ function prepare_next_dir(current_dir, dest_dir, mix::Bool, init_pass::Bool = fa
 end
 
 function generate_configs(
-        sys::CrystalStructure,
+        n_atoms::Int,
         cc::CanonicalConfiguration, 
         calc::LAMMPSCalculator,
         outdir::String,
@@ -148,7 +148,7 @@ function generate_configs(
     p = Progress(cc.nconf, desc = "Calculating Forces")
     for i in 1:cc.nconf
         filepath = get_filepath(i)
-        x_cart, _ = read_poscar_positions(filepath, n_atoms = length(sys))
+        x_cart, _ = TDEP.read_poscar_positions(filepath, n_atoms = n_atoms)
 
         PE, F = single_point_forces_and_energy(x_cart, calc)
 
@@ -180,6 +180,6 @@ function generate_configs(
     finish!(p)
 
     # Write infile.meta
-    write_meta(outdir, ustrip.(cc.temperature), cc.nconf + nconf_extra, 1.0, length(sys))
+    write_meta(outdir, ustrip.(cc.temperature), cc.nconf + nconf_extra, 1.0, n_atoms)
 
 end
