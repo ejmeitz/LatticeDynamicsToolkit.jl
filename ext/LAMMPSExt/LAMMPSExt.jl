@@ -19,5 +19,6 @@ include("energy_dataset.jl")
 
 include("gauss_legendre.jl")
 include("TI.jl")
+include("sTDEP.jl")
 
 end
