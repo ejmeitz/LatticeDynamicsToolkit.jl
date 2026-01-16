@@ -64,7 +64,7 @@ function LatticeDynamicsToolkit.sTDEP(
     end
 
     # Make ssposcar
-    write_ssposcar(basedir, sys.L .* bohr_to_A, sys.x_cart .* bohr_to_A, sys.species)
+    TDEP.write_ssposcar(basedir, sys.L .* bohr_to_A, sys.x_cart .* bohr_to_A, sys.species)
 
     get_path = (i) -> joinpath(basedir, "iter$(lpad(i,3,'0'))")
 
