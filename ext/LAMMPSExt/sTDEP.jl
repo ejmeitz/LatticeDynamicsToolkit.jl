@@ -102,7 +102,7 @@ function LatticeDynamicsToolkit.sTDEP(
         # Move IFCs from last iter to current dir
         prepare_next_dir(get_path(i-1), outdir, mix, i == 1)
         # Generate Configs Given Current IFCs
-        nconf_extra = mix ? nconf[i-1] : 0
+        nconf_extra = mix ? nconf[i] : 0 # if mixing account for extras
         generate_configs(sys, cc, calc, outdir, verbose; nconf_extra = nconf_extra)
         # Calculate IFCs to Generate Next Set of Configs
         execute(efc, outdir, ncores, verbose)
