@@ -154,7 +154,7 @@ function generate_configs(
     for i in 1:cc.nconf
         filepath = get_filepath(i)
         x_cart, _ = TDEP.read_poscar_positions(filepath, n_atoms = n_atoms)
-        x_frac = to_frac_coords.(Ref(cell_ang), x_cart) #! Allocation
+        x_frac = LatticeDynamicsToolkit.to_frac_coords.(Ref(cell_ang), x_cart) #! Allocation
 
         PE, f_buf = single_point_forces_and_energy!(f_buf, x_cart, calc)
 
