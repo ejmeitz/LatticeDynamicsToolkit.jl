@@ -124,9 +124,9 @@ function prepare_next_dir(current_dir, dest_dir, mix::Bool, init_pass::Bool = fa
     end
 
     if mix
-        cp(joinpath(currentdir, "infile.positions"), joinpath(dest_dir, "infile.positions"))
-        cp(joinpath(currentdir, "infile.forces"), joinpath(dest_dir, "infile.forces"))
-        cp(joinpath(currentdir, "infile.stat"), joinpath(dest_dir, "infile.stat"))
+        cp(joinpath(current_dir, "infile.positions"), joinpath(dest_dir, "infile.positions"))
+        cp(joinpath(current_dir, "infile.forces"), joinpath(dest_dir, "infile.forces"))
+        cp(joinpath(current_dir, "infile.stat"), joinpath(dest_dir, "infile.stat"))
     end
 end
 
