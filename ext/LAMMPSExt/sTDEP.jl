@@ -156,7 +156,7 @@ function generate_configs(
 
         # Add data to infile.forces
         open(joinpath(outdir, "infile.forces"), "a") do ff
-            for j in eachindex(f_buf)
+            for j in 1:n_atoms
                 @printf ff "%.15f %.15f %.15f\n" view(f_buf, :, j)...
             end
         end
