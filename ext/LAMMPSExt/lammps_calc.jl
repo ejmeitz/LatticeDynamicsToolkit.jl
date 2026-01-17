@@ -137,10 +137,10 @@ function single_point_potential_energy(r::AbstractVecOrMat, inter::LAMMPSCalcula
     return extract_compute(inter.lmp, "pot_e", STYLE_GLOBAL, TYPE_SCALAR)[1]
 end
 
-function single_point_forces_and_energy(r::AbstractVecOrMat, inter::LAMMPSCalculator)
+function single_point_forces_and_energy!(f_buf::AbstractVecOrMat, r::AbstractVecOrMat, inter::LAMMPSCalculator)
     scatter!(inter.lmp, "x", reinterpret(reshape, Float64, r))
     command(inter.lmp, "run 1 pre no post yes")
     PE = extract_compute(inter.lmp, "pot_e", STYLE_GLOBAL, TYPE_SCALAR)[1]
-    F = extract_compute(inter.lmp, "f", STYLE_ATOM, TYPE_VECTOR)[1]
-    return PE, F
+    gather!(inter.lmp, "f", f_buf)
+    return PE, f_buf
 end

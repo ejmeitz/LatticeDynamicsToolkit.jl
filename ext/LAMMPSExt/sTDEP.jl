@@ -144,18 +144,20 @@ function generate_configs(
 
     get_filepath = (i) -> joinpath(outdir, "contcar_conf$(lpad(i, 4, '0'))")
 
+    f_buf = zeros(Float64, 3, n_atoms)
+
     # Parse coordinates into sys object and calculate forces
     p = Progress(cc.nconf, desc = "Calculating Forces")
     for i in 1:cc.nconf
         filepath = get_filepath(i)
         x_cart, _ = TDEP.read_poscar_positions(filepath, n_atoms = n_atoms)
 
-        PE, F = single_point_forces_and_energy(x_cart, calc)
+        PE, f_buf = single_point_forces_and_energy!(f_buf, x_cart, calc)
 
         # Add data to infile.forces
         open(joinpath(outdir, "infile.forces"), "a") do ff
-            for j in eachindex(F)
-                @printf ff "%.15f %.15f %.15f\n" F[j]...
+            for j in eachindex(f_buf)
+                @printf ff "%.15f %.15f %.15f\n" view(f_buf, :, j)...
             end
         end
 
