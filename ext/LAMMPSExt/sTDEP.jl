@@ -87,7 +87,7 @@ function LatticeDynamicsToolkit.sTDEP(
         maximum_frequency = maximum_frequency
     )
 
-    generate_configs(length(sys), cc_init, calc, init_dir, verbose)
+    generate_configs(sys, cc_init, calc, init_dir, verbose)
 
     # Generate remaining configurations with IFCs from prior iteration
     for i in 1:(niter - 1)
@@ -103,7 +103,7 @@ function LatticeDynamicsToolkit.sTDEP(
         prepare_next_dir(get_path(i-1), outdir, mix, i == 1)
         # Generate Configs Given Current IFCs
         nconf_extra = mix ? nconf[i-1] : 0
-        generate_configs(length(sys), cc, calc, outdir, verbose; nconf_extra = nconf_extra)
+        generate_configs(sys, cc, calc, outdir, verbose; nconf_extra = nconf_extra)
         # Calculate IFCs to Generate Next Set of Configs
         execute(efc, outdir, ncores, verbose)
         # Generate DOS and Dispersion Data
@@ -131,13 +131,16 @@ function prepare_next_dir(current_dir, dest_dir, mix::Bool, init_pass::Bool = fa
 end
 
 function generate_configs(
-        n_atoms::Int,
+        sys::CrystalStructure,
         cc::CanonicalConfiguration, 
         calc::LAMMPSCalculator,
         outdir::String,
         verbose::Bool;
         nconf_extra::Int = 0
     )
+
+    n_atoms = length(sys)
+    cell_ang = sys.L .* bohr_to_A
 
     @info "Generating Configurations"
     execute(cc, outdir, 1, verbose)
@@ -151,6 +154,7 @@ function generate_configs(
     for i in 1:cc.nconf
         filepath = get_filepath(i)
         x_cart, _ = TDEP.read_poscar_positions(filepath, n_atoms = n_atoms)
+        x_frac = to_frac_coords.(Ref(cell_ang), x_cart) #! Allocation
 
         PE, f_buf = single_point_forces_and_energy!(f_buf, x_cart, calc)
 
