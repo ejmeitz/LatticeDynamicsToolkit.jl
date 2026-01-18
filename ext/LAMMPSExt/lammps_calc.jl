@@ -131,9 +131,10 @@ AtomsCalculators.energy_unit(inter::LAMMPSCalculator) = NoUnits
 # Expect Vector of Vectors or 3 x N Matrix
 function single_point_potential_energy(f_zeros_buf::AbstractVecOrMat, r::AbstractVecOrMat, inter::LAMMPSCalculator)
     scatter!(inter.lmp, "x", reinterpret(reshape, Float64, r))
-    scatter!(inter.lmp, "f", f_zeros_buf)  # zero old forces for Verlet
+    # Zero forces and velocities so verlet update does nothing
+    scatter!(inter.lmp, "f", f_zeros_buf)
     command(inter.lmp, "velocity all set 0 0 0")
-    command(inter.lmp, "run 1 pre no post yes")  # run 0 computes at exact positions (no integration)
+    command(inter.lmp, "run 1 pre no post yes")  # pre no skips neighbor rebuild, cannot do this with run 0
     return extract_compute(inter.lmp, "pot_e", STYLE_GLOBAL, TYPE_SCALAR)[1]
 end
 
@@ -144,9 +145,10 @@ function single_point_forces_and_energy!(
         inter::LAMMPSCalculator
     )    
     scatter!(inter.lmp, "x", reinterpret(reshape, Float64, r))
-    scatter!(inter.lmp, "f", f_zeros_buf)  # zero old forces for Verlet
+    # Zero forces and velocities so verlet update does nothing
+    scatter!(inter.lmp, "f", f_zeros_buf) 
     command(inter.lmp, "velocity all set 0 0 0")
-    command(inter.lmp, "run 1 pre no post yes")  # pre no skips neighbor rebuild
+    command(inter.lmp, "run 1 pre no post yes")  # pre no skips neighbor rebuild, cannot do this with run 0
     PE = extract_compute(inter.lmp, "pot_e", STYLE_GLOBAL, TYPE_SCALAR)[1]
     gather!(inter.lmp, "f", f_buf)
     return PE, f_buf

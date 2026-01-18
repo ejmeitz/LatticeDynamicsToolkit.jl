@@ -69,7 +69,11 @@ function LatticeDynamicsToolkit.sTDEP(
     get_path = (i) -> joinpath(basedir, "iter$(lpad(i,3,'0'))")
 
     efc = ExtractForceConstants(secondorder_cutoff = rc2)
-    pd = PhononDispersionRelations(dos = true)
+    if quantum
+        pd = PhononDispersionRelations(dos = true, temperature = Float64(temperature))
+    else
+        pd = PhononDispersionRelations(dos = true)
+    end
 
     init_dir = get_path(0)
     mkdir(init_dir)
