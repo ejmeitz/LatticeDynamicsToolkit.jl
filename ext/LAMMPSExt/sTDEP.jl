@@ -148,6 +148,7 @@ function generate_configs(
     get_filepath = (i) -> joinpath(outdir, "contcar_conf$(lpad(i, 4, '0'))")
 
     f_buf = zeros(Float64, 3, n_atoms)
+    f_zeros_buf = zeros(Float64, 3, n_atoms)
 
     # Parse coordinates into sys object and calculate forces
     p = Progress(cc.nconf, desc = "Calculating Forces")
@@ -156,7 +157,7 @@ function generate_configs(
         x_cart, _ = TDEP.read_poscar_positions(filepath, n_atoms = n_atoms)
         x_frac = LatticeDynamicsToolkit.to_frac_coords.(Ref(cell_ang), x_cart) #! Allocation
 
-        PE, f_buf = single_point_forces_and_energy!(f_buf, x_cart, calc)
+        PE, f_buf = single_point_forces_and_energy!(f_buf, f_zeros_buf, x_cart, calc)
 
         # Add data to infile.forces
         open(joinpath(outdir, "infile.forces"), "a") do ff
