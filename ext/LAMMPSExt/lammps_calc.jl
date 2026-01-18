@@ -105,13 +105,13 @@ function LatticeDynamicsToolkit.LAMMPSCalculator(
 
     command(lmp, "compute pot_e all pe")
 
-    # Little hack to make single point calculations
-    # fast and avoid re-building neighborlist a lot
     if single_point
+        # For single point calculations, we just need a minimal integrator
+        # so LAMMPS can run. We set velocities to zero and use tiny timestep
+        # to ensure atoms don't move between calls.
         command(lmp, "fix hold all nve")
-        command(lmp, "fix freeze all setforce 0.0 0.0 0.0")
         command(lmp, "velocity all set 0 0 0")
-        command(lmp, "timestep 0.01") # timestep won't matter since we freeze atoms
+        command(lmp, "timestep 1e-10")  # effectively zero
     end # if not single_point user is responsible for doing things like initializing velos, see TI.jl
 
     # This allows LAMMPS to register the computes/fixes
@@ -126,20 +126,20 @@ AtomsCalculators.energy_unit(inter::LAMMPSCalculator) = NoUnits
 # Assumes sys.r_cart already in right units 
 function AtomsCalculators.potential_energy(sys::CrystalStructure, inter::LAMMPSCalculator; kwargs...)
     scatter!(inter.lmp, "x", reinterpret(reshape, Float64, sys.r_cart))
-    command(inter.lmp, "run 1 pre no post yes")
+    command(inter.lmp, "run 0 pre no post yes")
     return extract_compute(inter.lmp, "pot_e", STYLE_GLOBAL, TYPE_SCALAR)[1]
 end
 
 # Expect Vector of Vectors or 3 x N Matrix
 function single_point_potential_energy(r::AbstractVecOrMat, inter::LAMMPSCalculator)
     scatter!(inter.lmp, "x", reinterpret(reshape, Float64, r))
-    command(inter.lmp, "run 1 pre no post yes")
+    command(inter.lmp, "run 0 post yes")  # run 0 computes energy without integration
     return extract_compute(inter.lmp, "pot_e", STYLE_GLOBAL, TYPE_SCALAR)[1]
 end
 
 function single_point_forces_and_energy!(f_buf::AbstractVecOrMat, r::AbstractVecOrMat, inter::LAMMPSCalculator)
     scatter!(inter.lmp, "x", reinterpret(reshape, Float64, r))
-    command(inter.lmp, "run 1 pre no post yes")
+    command(inter.lmp, "run 0 post yes")  # run 0 computes forces without integration
     PE = extract_compute(inter.lmp, "pot_e", STYLE_GLOBAL, TYPE_SCALAR)[1]
     gather!(inter.lmp, "f", f_buf)
     return PE, f_buf
