@@ -111,6 +111,7 @@ function _canonical_configs_V!(
             tmp = zeros(size(phi_A))
             coord_storage = zeros(D*N_atoms)
             randn_storage = zeros(D*N_atoms - D)
+            f_zero_buf = zeros(D, N_atoms)
         end
 
         calc = take!(chnl)
@@ -129,7 +130,7 @@ function _canonical_configs_V!(
         # all LAMMPSCalculators use metal units
         cs .*= bohr_to_A
         cs .+= x_cart_eq_ang
-        V[n] = single_point_potential_energy(cs, calc)
+        V[n] = single_point_potential_energy(f_zero_buf, cs, calc)
 
 
         put!(chnl, calc)
