@@ -25,8 +25,29 @@ function LatticeDynamicsToolkit.make_energy_dataset(
                                  n_threads = n_threads)
 end
 
-#Assumes IFCs are supercell already
-# Comptue true energy given `calc` via AtomsCalculators
+# Quantum weight: w = sech²(ħω/2kT) = 4n(n+1)/(2n+1)²
+function _mode_weight(::QuantumConfigSettings, n_i::Float64)
+    denom = 2*n_i + 1
+    return 4 * n_i * (n_i + 1) / (denom * denom)
+end
+_mode_weight(::ClassicalConfigSettings, ::Float64) = 1.0
+
+# Precompute c_i = w_i * (1/2) * m_i * ω_i² * σ_i²
+# Mass factor needed for proper energy units (Hartree)
+function _v2_tilde_coefficients(CS::ConfigSettings, freqs_view, sigma_sq, masses)
+    T = CS.temperature
+    coeffs = zeros(length(freqs_view))
+    for (i, (ω, σ², m)) in enumerate(zip(freqs_view, sigma_sq, masses))
+        coeffs[i] = _mode_weight(CS, LatticeDynamicsToolkit.planck(T, ω))
+        # the `mode_amplitude` function is mass normalized already
+        # so we need to multiply by mass here to get correct units
+        coeffs[i] *= 0.5 * m * ω^2 * σ²
+    end
+    return coeffs
+end
+
+# Assumes IFCs are supercell already
+# Compute true energy given `calc` via AtomsCalculators
 function _make_energy_dataset(
     cc_settings::ConfigSettings,
     sc::CrystalStructure,
@@ -34,7 +55,8 @@ function _make_energy_dataset(
     ifc2::Union{IFC2, AmorphousIFC2},
     ifc3::Union{Nothing, IFC3} = nothing,
     ifc4::Union{Nothing, IFC4} = nothing,
-    n_threads::Integer = Threads.nthreads()
+    n_threads::Integer = Threads.nthreads(),
+    D::Int = 3
 )
     valid_ifcs = Iterators.filter(!isnothing, (ifc2, ifc3, ifc4))
 
@@ -44,53 +66,33 @@ function _make_energy_dataset(
     freqs_sq, phi = get_modes(dynmat, Val{true}())
     freqs = sqrt.(freqs_sq)  # Will error for negative frequencies which I am ok with
 
-    tep_energies = zeros(SVector{3, Float64}, cc_settings.n_configs)
-
-    f = (config) -> energies(config, ifc2; fc3=ifc3, fc4=ifc4, n_threads=1)
-
-    @info "Building Energy Dataset"
-    tep_energies, V = _canonical_configs_V!(
-        tep_energies,
-        f,
-        sc,
-        make_calc,
-        cc_settings,
-        freqs,
-        phi,
-        sc.m;
-        n_threads = n_threads
-    )
-
-    return Hartree_to_eV .* tep_energies, V
-
-end
-
-# Uses AtomsCalculators to calculate True energies
-function _canonical_configs_V!(
-        output, 
-        f::Function, 
-        sc::CrystalStructure, 
-        make_calc::Function,
-        CM::ConfigSettings, 
-        freqs::AbstractVector,
-        phi::AbstractMatrix, 
-        atom_masses::AbstractVector;
-        n_threads::Int = Threads.nthreads(),
-        D::Int = 3
-    )
-    
     N_atoms = Int(length(freqs) / D)
 
-    freqs_view, phi_view, atom_masses = LatticeDynamicsToolkit.prepare(freqs, phi, D, atom_masses)
-
+    # Prepare frequencies and amplitudes
+    freqs_view, phi_view, atom_masses = LatticeDynamicsToolkit.prepare(freqs, phi, D, sc.m)
+    
     phi_view_T = transpose(phi_view)
     atom_masses_T = transpose(atom_masses)
-    mean_amplitude_matrix = LatticeDynamicsToolkit.mean_amplitude.(Ref(CM), freqs_view, atom_masses_T) # D*N_atoms - D x D*N_atoms
+    mean_amplitude_matrix = LatticeDynamicsToolkit.mean_amplitude.(Ref(cc_settings), freqs_view, atom_masses_T)
 
     # Pre-scale modes by their amplitudes
-    phi_A = phi_view_T .* mean_amplitude_matrix # D*N_atoms x D*N_atoms - D
+    phi_A = phi_view_T .* mean_amplitude_matrix
 
-    V = zeros(Float64, CM.n_configs)
+    # Compute V2_tilde coefficients (include mass for proper energy units)
+    sigma_sq = mean_amplitude_matrix .^ 2
+    coeffs = _v2_tilde_coefficients(cc_settings, freqs_view, sigma_sq, atom_masses)
+
+    # f(config, z) returns (energies, v2_tilde) - closure captures coeffs
+    f = (config, z) -> begin
+        tep = energies(config, ifc2; fc3=ifc3, fc4=ifc4, n_threads=1)
+        v2t = sum(coeffs[i] * z[i]^2 for i in eachindex(z))
+        return (tep, v2t)
+    end
+
+    # Storage arrays
+    tep_energies = zeros(SVector{3, Float64}, cc_settings.n_configs)
+    V = zeros(Float64, cc_settings.n_configs)
+    V2_tilde = zeros(Float64, cc_settings.n_configs)
 
     # LAMMPSCalculator only supports metal units
     x_cart_eq_ang = copy(sc.x_cart) .* bohr_to_A
@@ -101,8 +103,9 @@ function _canonical_configs_V!(
         put!(chnl, make_calc(sc))
     end
 
-    p = Progress(CM.n_configs; desc="Calculating Energies", dt = 0.25, color = :magenta)
-    @tasks for n in 1:CM.n_configs
+    @info "Building Energy Dataset"
+    p = Progress(cc_settings.n_configs; desc="Calculating Energies", dt = 0.25, color = :magenta)
+    @tasks for n in 1:cc_settings.n_configs
         @set begin
             ntasks = n_threads
             scheduler = :static
@@ -121,10 +124,10 @@ function _canonical_configs_V!(
 
         tmp .*= randn_storage
 
-        # Evalulate user function
+        # Evaluate user function with config AND z values
         coord_storage .= vec(sum(tmp, dims=1))
         cs = reinterpret(SVector{D, Float64}, coord_storage)
-        output[n] = f(cs)
+        tep_energies[n], V2_tilde[n] = f(cs, randn_storage)
 
         # Calculate energy with provided calculator
         # all LAMMPSCalculators use metal units
@@ -132,11 +135,10 @@ function _canonical_configs_V!(
         cs .+= x_cart_eq_ang
         V[n] = single_point_potential_energy(f_zero_buf, cs, calc)
 
-
         put!(chnl, calc)
         next!(p)
     end
     finish!(p)
 
-    return output, V
+    return Hartree_to_eV .* tep_energies, V, Hartree_to_eV .* V2_tilde
 end
