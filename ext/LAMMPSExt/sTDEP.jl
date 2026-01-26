@@ -64,7 +64,7 @@ function LatticeDynamicsToolkit.sTDEP(
     end
 
     # Make ssposcar
-    TDEP.write_ssposcar(basedir, sys.L .* bohr_to_A, sys.x_cart .* bohr_to_A, sys.species)
+    TDEPWrapper.write_ssposcar(basedir, sys.L .* bohr_to_A, sys.x_cart .* bohr_to_A, sys.species)
 
     get_path = (i) -> joinpath(basedir, "iter$(lpad(i,3,'0'))")
 
@@ -158,7 +158,7 @@ function generate_configs(
     p = Progress(cc.nconf, desc = "Calculating Forces")
     for i in 1:cc.nconf
         filepath = get_filepath(i)
-        x_cart, _ = TDEP.read_poscar_positions(filepath, n_atoms = n_atoms)
+        x_cart, _ = TDEPWrapper.read_poscar_positions(filepath, n_atoms = n_atoms)
         x_frac = LatticeDynamicsToolkit.to_frac_coords.(Ref(cell_ang), x_cart) #! Allocation
 
         PE, f_buf = single_point_forces_and_energy!(f_buf, f_zeros_buf, x_cart, calc)
