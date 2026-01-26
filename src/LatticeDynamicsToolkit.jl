@@ -15,6 +15,7 @@ using Statistics: mean
 import Random: randn!
 using HDF5
 using KrylovKit
+using TDEPWrapper
 
 include("constants.jl")
 include("util.jl")
