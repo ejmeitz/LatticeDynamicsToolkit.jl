@@ -269,7 +269,7 @@ function free_energy_thirdorder(
                             # Free energy formulas
                             f1 = (n1 + 1.0) * (n2 + n3 + 1.0) + n2 * n3
                             # f2 = n1 * n2 + n1 * n3 - n2 * n3 + 1.0
-                            f2 = n3*(n1+n2+1.0_r8) - n1*n2
+                            f2 = n3*(n1+n2+1.0) - n1*n2
                             
                             # Entropy formulas
                             df1 = dn1 * (n2 + n3 + 1.0) + (n1 + 1.0) * (dn2 + dn3) + dn2 * n3 + n2 * dn3
