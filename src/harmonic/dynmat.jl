@@ -1,6 +1,8 @@
 export 
     dynmat_gamma,
-    get_modes
+    get_modes,
+    dynmat_q,
+    dynmat_q!
 
 #! probably some speed to be gained by using SMatrix for dynmats
 

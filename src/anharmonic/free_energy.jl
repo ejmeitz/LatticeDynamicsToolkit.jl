@@ -49,6 +49,7 @@ function free_energy_corrections(
                     n_threads = n_threads
                 )
 
+
     # F = U - TS
     U3 = (F3 + (T*S3)) * Hartree_to_eV
     U4 = (F4 + (T*S4)) * Hartree_to_eV
@@ -155,7 +156,7 @@ function free_energy_thirdorder(
     
     # Ω = (2pi)^3 / volume(uc)
     one_im = ComplexF64(1.0, 0.0)
-    
+
     # Main loop over irreducible and full q-points
     p = Progress(n_irr, "Second Order Correction")
     (f3, s3, cv3) = @tasks for q1 in 1:n_irr
@@ -183,14 +184,15 @@ function free_energy_thirdorder(
             q3 = fft_third_grid_index(qp.full_index_ibz[q1], q2, dims)
             
             # Skip if q3 < q2 (permutation symmetry)
-            q3 < q2 && continue
+            # q3 < q2 && continue
 
             # Convert q-vector to cartesian
             q3_full_cart .= q_cart_from_frac(uc, qp.k_full[q3].r)
 
 
             # Multiplicity factor
-            mult = (q2 == q3) ? 1.0 : 2.0
+            # mult = (q2 == q3) ? 1.0 : 2.0
+            mult = 1.0
             
             # Prefactor including integration weights
             prefactor = qp.weights_ibz[q1] * qp.k_full[q2].weight * mult / length(uc)
@@ -266,7 +268,8 @@ function free_energy_thirdorder(
                             
                             # Free energy formulas
                             f1 = (n1 + 1.0) * (n2 + n3 + 1.0) + n2 * n3
-                            f2 = n1 * n2 + n1 * n3 - n2 * n3 + 1.0
+                            # f2 = n1 * n2 + n1 * n3 - n2 * n3 + 1.0
+                            f2 = n3*(n1+n2+1.0_r8) - n1*n2
                             
                             # Entropy formulas
                             df1 = dn1 * (n2 + n3 + 1.0) + (n1 + 1.0) * (dn2 + dn3) + dn2 * n3 + n2 * dn3
