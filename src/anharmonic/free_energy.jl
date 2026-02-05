@@ -189,11 +189,11 @@ function free_energy_thirdorder(
             # Convert q-vector to cartesian
             q3_full_cart .= q_cart_from_frac(uc, qp.k_full[q3].r)
 
-            # Multiplicity factor (only for symmetric f1 term)
+            # Multiplicity factor (only for symmetric f1 term, applied separately)
             mult = (q2 == q3) ? 1.0 : 2.0
             
-            # Prefactor including integration weights
-            prefactor = qp.weights_ibz[q1] * qp.k_full[q2].weight * mult / length(uc)
+            # Prefactor including integration weights (mult handled separately for f1 vs f2)
+            prefactor = qp.weights_ibz[q1] * qp.k_full[q2].weight / length(uc)
             
             # Pre-transform the matrix element
             pretransform_phi3!(
@@ -308,10 +308,10 @@ function free_energy_thirdorder(
                             df0 = (df1_term + df2_term) / 48.0
                             ddf0 = (ddf1_term + ddf2_term) * temperature / 48.0
                         else
-                            # Classical case
-                            f0 = (kB_Hartree * temperature)^2 / (ω1 * ω2 * ω3) / 12.0
-                            df0 = kB_Hartree^2 * temperature / (ω1 * ω2 * ω3) / 6.0
-                            ddf0 = kB_Hartree^2 * temperature / (ω1 * ω2 * ω3) / 6.0
+                            # Classical case (symmetric, use mult directly)
+                            f0 = mult * (kB_Hartree * temperature)^2 / (ω1 * ω2 * ω3) / 12.0
+                            df0 = mult * kB_Hartree^2 * temperature / (ω1 * ω2 * ω3) / 6.0
+                            ddf0 = mult * kB_Hartree^2 * temperature / (ω1 * ω2 * ω3) / 6.0
                         end
                         
                         # Accumulate
