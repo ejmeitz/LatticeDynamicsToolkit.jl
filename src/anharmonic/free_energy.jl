@@ -184,15 +184,13 @@ function free_energy_thirdorder(
             q3 = fft_third_grid_index(qp.full_index_ibz[q1], q2, dims)
             
             # Skip if q3 < q2 (permutation symmetry)
-            # q3 < q2 && continue
+            q3 < q2 && continue
 
             # Convert q-vector to cartesian
             q3_full_cart .= q_cart_from_frac(uc, qp.k_full[q3].r)
 
-
-            # Multiplicity factor
-            # mult = (q2 == q3) ? 1.0 : 2.0
-            mult = 1.0
+            # Multiplicity factor (only for symmetric f1 term)
+            mult = (q2 == q3) ? 1.0 : 2.0
             
             # Prefactor including integration weights
             prefactor = qp.weights_ibz[q1] * qp.k_full[q2].weight * mult / length(uc)
@@ -266,33 +264,49 @@ function free_energy_thirdorder(
                             sig3 = sigsq[qp.k_full[q3].irreducible_index, b3]
                             sigma = sqrt(sig1 + sig2 + sig3)
                             
-                            # Free energy formulas
+                            # f1 term (symmetric under q2↔q3, use mult)
                             f1 = (n1 + 1.0) * (n2 + n3 + 1.0) + n2 * n3
-                            f2 = n3 * (n1 + n2 + 1.0) - n1*n2
-                            
-                            # Entropy formulas
                             df1 = dn1 * (n2 + n3 + 1.0) + (n1 + 1.0) * (dn2 + dn3) + dn2 * n3 + n2 * dn3
-                            df2 = dn3 * (n1 + n2 + 1.0) + (dn1 * (n3 - n2)) + (dn2 * (n3 - n1))
-                            
-                            # Heat capacity formulas
                             ddf1 = ddn1 * (n2 + n3 + 1.0) + 2.0 * dn1 * (dn2 + dn3) + 
                                    (n1 + 1.0) * (ddn2 + ddn3) + ddn2 * n3 + n2 * ddn3 + 2.0 * dn2 * dn3
-                            ddf2 = (ddn3 * (n1 + n2 + 1.0)) + (dn3 * (dn1 + dn2)) +
-                                   (ddn1 * (n3 - n2)) + (dn1 * (dn3 - dn2)) + 
-                                   (ddn2 * (n3 - n1)) + (dn2 * (dn3 - dn1))
                             
-                            # Compute principal values with smearing
-                            f1 = f1 * real(1.0 / (ω1 + ω2 + ω3 + im * sigma))
-                            df1 = df1 * real(1.0 / (ω1 + ω2 + ω3 + im * sigma))
-                            ddf1 = ddf1 * real(1.0 / (ω1 + ω2 + ω3 + im * sigma))
-                            f2 = 3.0 * f2 * real(1.0 / (ω1 + ω2 - ω3 + im * sigma))
-                            df2 = 3.0 * df2 * real(1.0 / (ω1 + ω2 - ω3 + im * sigma))
-                            ddf2 = 3.0 * ddf2 * real(1.0 / (ω1 + ω2 - ω3 + im * sigma))
+                            denom1 = real(1.0 / (ω1 + ω2 + ω3 + im * sigma))
+                            f1_term = mult * f1 * denom1
+                            df1_term = mult * df1 * denom1
+                            ddf1_term = mult * ddf1 * denom1
+                            
+                            # f2 term (asymmetric under q2↔q3, need both orderings when q2 ≠ q3)
+                            # Original ordering
+                            f2_a = n3 * (n1 + n2 + 1.0) - n1 * n2
+                            df2_a = dn3 * (n1 + n2 + 1.0) + dn1 * (n3 - n2) + dn2 * (n3 - n1)
+                            ddf2_a = (ddn3 * (n1 + n2 + 1.0)) + (dn3 * (dn1 + dn2)) +
+                                     (ddn1 * (n3 - n2)) + (dn1 * (dn3 - dn2)) + 
+                                     (ddn2 * (n3 - n1)) + (dn2 * (dn3 - dn1))
+                            denom2_a = real(1.0 / (ω1 + ω2 - ω3 + im * sigma))
+                            
+                            if q2 == q3
+                                # When q2 == q3: n2=n3, ω2=ω3, so both orderings are identical
+                                f2_term = 3.0 * f2_a * denom2_a
+                                df2_term = 3.0 * df2_a * denom2_a
+                                ddf2_term = 3.0 * ddf2_a * denom2_a
+                            else
+                                # Swapped ordering (q2↔q3): swap n2↔n3, ω2↔ω3
+                                f2_b = n2 * (n1 + n3 + 1.0) - n1 * n3
+                                df2_b = dn2 * (n1 + n3 + 1.0) + dn1 * (n2 - n3) + dn3 * (n2 - n1)
+                                ddf2_b = (ddn2 * (n1 + n3 + 1.0)) + (dn2 * (dn1 + dn3)) +
+                                         (ddn1 * (n2 - n3)) + (dn1 * (dn2 - dn3)) + 
+                                         (ddn3 * (n2 - n1)) + (dn3 * (dn2 - dn1))
+                                denom2_b = real(1.0 / (ω1 + ω3 - ω2 + im * sigma))
+                                
+                                f2_term = 3.0 * (f2_a * denom2_a + f2_b * denom2_b)
+                                df2_term = 3.0 * (df2_a * denom2_a + df2_b * denom2_b)
+                                ddf2_term = 3.0 * (ddf2_a * denom2_a + ddf2_b * denom2_b)
+                            end
                             
                             # Combine
-                            f0 = (f1 + f2) / 48.0
-                            df0 = (df1 + df2) / 48.0
-                            ddf0 = (ddf1 + ddf2) * temperature / 48.0
+                            f0 = (f1_term + f2_term) / 48.0
+                            df0 = (df1_term + df2_term) / 48.0
+                            ddf0 = (ddf1_term + ddf2_term) * temperature / 48.0
                         else
                             # Classical case
                             f0 = (kB_Hartree * temperature)^2 / (ω1 * ω2 * ω3) / 12.0
