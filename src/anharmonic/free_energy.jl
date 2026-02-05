@@ -183,19 +183,12 @@ function free_energy_thirdorder(
             # Find q3 such that q1 + q2 + q3 = 0
             q3 = fft_third_grid_index(qp.full_index_ibz[q1], q2, dims)
             
-            # Skip if q3 < q2 (permutation symmetry)
-            # q3 < q2 && continue
-
             # Convert q-vector to cartesian
             q3_full_cart .= q_cart_from_frac(uc, qp.k_full[q3].r)
 
-
-            # Multiplicity factor
-            # mult = (q2 == q3) ? 1.0 : 2.0
-            mult = 1.0
             
             # Prefactor including integration weights
-            prefactor = qp.weights_ibz[q1] * qp.k_full[q2].weight * mult / length(uc)
+            prefactor = qp.weights_ibz[q1] * qp.k_full[q2].weight / length(uc)
             
             # Pre-transform the matrix element
             pretransform_phi3!(
