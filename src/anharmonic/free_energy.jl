@@ -186,7 +186,6 @@ function free_energy_thirdorder(
             # Convert q-vector to cartesian
             q3_full_cart .= q_cart_from_frac(uc, qp.k_full[q3].r)
 
-            
             # Prefactor including integration weights
             prefactor = qp.weights_ibz[q1] * qp.k_full[q2].weight / length(uc)
             
