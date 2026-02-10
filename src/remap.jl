@@ -76,7 +76,7 @@ function remap(
                 end
             end
             
-            if i2 == 0
+            if i2 == -1
                 error("Failed mapping second-order IFCs for atom $a1 (pair $i): no match for target position.")
             end
 

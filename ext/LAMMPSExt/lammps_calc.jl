@@ -28,7 +28,7 @@ function LatticeDynamicsToolkit.LAMMPSCalculator(
     else
         LAMMPS.MPI.Init(threadlevel=:multiple)
     end
-    lmp = LMP(["-screen","none"], LAMMPS.MPI.COMM_SELF)
+    lmp = LMP(["-screen","none","-log","$(logfile_path)"], LAMMPS.MPI.COMM_SELF)
 
     all_syms = AtomsBase.atomic_symbol(sys, :)
     unique_syms = unique(all_syms)
@@ -66,7 +66,6 @@ function LatticeDynamicsToolkit.LAMMPSCalculator(
     skin_distance = bohr_to_A * minimum(x -> last(x), nl)
 
     setup_cmd = """
-            log $(logfile_path)
             units $(unit_system)
             atom_style atomic
             atom_modify map array sort 0 0

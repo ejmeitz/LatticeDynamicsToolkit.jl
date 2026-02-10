@@ -8,7 +8,8 @@ function LatticeDynamicsToolkit.make_energy_dataset(
         ifc2::Union{IFC2, AmorphousIFC2}, # required, but pass as kwarg
         ifc3::Union{Nothing, IFC3} = nothing,
         ifc4::Union{Nothing, IFC4} = nothing,
-        n_threads::Integer = Threads.nthreads()
+        n_threads::Integer = Threads.nthreads(),
+        verbose::Bool = true
     )
 
     valid_ifcs = Iterators.filter(!isnothing, (ifc2, ifc3, ifc4))
@@ -17,12 +18,12 @@ function LatticeDynamicsToolkit.make_energy_dataset(
         error(ArgumentError("Does not make sense to use AmorphousIFC2 with other higher order IFCs to build energy dataset"))
     end
     
-    @info "Remapping IFCs to Supercell"
+    verbose && @info "Remapping IFCs to Supercell"
     valid_ifcs_remapped = remap(sc, uc, valid_ifcs...)
     valid_ifcs_remapped_kwargs = LatticeDynamicsToolkit.build_kwargs(valid_ifcs_remapped...)
     
     return _make_energy_dataset(cc_settings, sc, make_calc; valid_ifcs_remapped_kwargs...,
-                                 n_threads = n_threads)
+                                 n_threads = n_threads, verbose = verbose)
 end
 
 # Quantum weight: w = sech²(ħω/2kT) = 4n(n+1)/(2n+1)²
@@ -56,7 +57,8 @@ function _make_energy_dataset(
     ifc3::Union{Nothing, IFC3} = nothing,
     ifc4::Union{Nothing, IFC4} = nothing,
     n_threads::Integer = Threads.nthreads(),
-    D::Int = 3
+    D::Int = 3,
+    verbose::Bool = true     
 )
     valid_ifcs = Iterators.filter(!isnothing, (ifc2, ifc3, ifc4))
 
@@ -103,8 +105,8 @@ function _make_energy_dataset(
         put!(chnl, make_calc(sc))
     end
 
-    @info "Building Energy Dataset"
-    p = Progress(cc_settings.n_configs; desc="Calculating Energies", dt = 0.25, color = :magenta)
+    verbose && @info "Building Energy Dataset"
+    p = Progress(cc_settings.n_configs; desc="Calculating Energies", dt = 0.25, color = :magenta, enabled = verbose)
     @tasks for n in 1:cc_settings.n_configs
         @set begin
             ntasks = n_threads
@@ -138,7 +140,7 @@ function _make_energy_dataset(
         put!(chnl, calc)
         next!(p)
     end
-    finish!(p)
+    verbose && finish!(p)
 
     return Hartree_to_eV .* tep_energies, V, Hartree_to_eV .* V2_tilde
 end

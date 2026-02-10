@@ -19,17 +19,25 @@ using TDEPWrapper
 
 include("constants.jl")
 include("util.jl")
+
+include("io/io_utils.jl")
+include("io/poscar.jl")
 include("types/types.jl")
 include("types/stubs.jl")
 include("types/meshes.jl")
 include("types/ifcs.jl")
+include("io/forceconstants.jl")
+include("io/tdep_io.jl")
+include("io/hdf5_io.jl")
+
+
 include("harmonic/dynmat.jl")
 include("harmonic/thermo.jl")
 include("harmonic/dispersion.jl")
 include("harmonic/canonical_configs.jl")
 include("anharmonic/free_energy.jl")
+
 include("distance_table.jl")
-include("io.jl")
 include("remap.jl")
 include("epot.jl")
 include("fit_amorphous.jl")
@@ -43,4 +51,4 @@ precompile(CrystalStructure, (String,))
 
 #! precompile energies and remapping?
 
-end # module TDEPToolkit
+end # module LatticeDynamicsToolkit

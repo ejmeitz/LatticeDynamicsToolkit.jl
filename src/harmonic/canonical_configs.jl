@@ -42,7 +42,8 @@ end
 
 function canonical_configs(CM::ConfigSettings, freqs::AbstractVector,
                          phi::AbstractMatrix, atom_masses::AbstractVector;
-                         n_threads::Int = Threads.nthreads(), D::Int = 3)
+                         n_threads::Int = Threads.nthreads(), D::Int = 3,
+                         verbose::Bool = true)
     
     N_atoms = Int(length(freqs) / D)
 
@@ -59,7 +60,7 @@ function canonical_configs(CM::ConfigSettings, freqs::AbstractVector,
     phi_A = phi_view_T .* mean_amplitude_matrix # D*N_atoms x D*N_atoms - D
 
 
-    p = Progress(CM.n_configs; desc="Generating Disps", dt = 0.1, color = :magenta)
+    p = Progress(CM.n_configs; desc="Generating Disps", dt = 0.1, color = :magenta, enabled = verbose)
     @tasks for n in 1:CM.n_configs
         @set begin
             ntasks = n_threads
@@ -78,14 +79,15 @@ function canonical_configs(CM::ConfigSettings, freqs::AbstractVector,
 
         next!(p)
     end
-    finish!(p)
+    verbose && finish!(p)
 
     return configs
 end
 
 function canonical_configs_and_velocities(CM::ConfigSettings, freqs::AbstractVector,
                                           phi::AbstractMatrix, atom_masses::AbstractVector;
-                                          n_threads::Int = Threads.nthreads(), D::Int = 3 )
+                                          n_threads::Int = Threads.nthreads(), D::Int = 3,
+                                          verbose::Bool = true)
     
     N_atoms = Int(length(freqs) / D)
 
@@ -103,7 +105,7 @@ function canonical_configs_and_velocities(CM::ConfigSettings, freqs::AbstractVec
     phi_A = phi_view_T .* mean_amplitude_matrix # D*N_atoms x D*N_atoms - D
     freq_unit = unit(first(freqs_view))
     
-    p = Progress(CM.n_configs; desc="Generating Disps & Velos", dt = 0.1, color = :yellow)
+    p = Progress(CM.n_configs; desc="Generating Disps & Velos", dt = 0.1, color = :yellow, enabled = verbose)
     # reinterpret_type = typeof(first(phi_A) * freq_unit)
     @tasks for n in 1:CM.n_configs
         @set begin
@@ -130,14 +132,15 @@ function canonical_configs_and_velocities(CM::ConfigSettings, freqs::AbstractVec
         velos[:, n] .= vec(sum(tmp2, dims=1))
         next!(p)
     end
-    finish!(p)
+    verbose && finish!(p)
 
     return configs, velos
 end
 
 function canonical_velocities(CM::ConfigSettings, freqs::AbstractVector,
     phi::AbstractMatrix, atom_masses::AbstractVector;
-    n_threads::Int = Threads.nthreads(), D::Int = 3)
+    n_threads::Int = Threads.nthreads(), D::Int = 3,
+    verbose::Bool = true)
 
     N_atoms = Int(length(freqs) / D)
 
@@ -154,7 +157,7 @@ function canonical_velocities(CM::ConfigSettings, freqs::AbstractVector,
     phi_A = phi_view_T .* mean_amplitude_matrix # D*N_atoms x D*N_atoms - D
     freq_unit = unit(first(freqs_view))
     
-    p = Progress(CM.n_configs; desc="Generating Velos", dt = 0.1, color = :green)
+    p = Progress(CM.n_configs; desc="Generating Velos", dt = 0.1, color = :green, enabled = verbose)
     # reinterpret_type = typeof(first(phi_A) * freq_unit)
     @tasks for n in 1:CM.n_configs
         @set begin
@@ -175,7 +178,7 @@ function canonical_velocities(CM::ConfigSettings, freqs::AbstractVector,
         velos[:, n] .= vec(sum(tmp2, dims=1))
         next!(p)
     end
-    finish!(p)
+    verbose && finish!(p)
 
     return velos
 end
@@ -184,7 +187,8 @@ end
 # avoids allocating all configurations in RAM. Expects f(::Vector{SVector{3, Float64}})
 function canonical_configs!(output, f::Function, CM::ConfigSettings, freqs::AbstractVector,
                          phi::AbstractMatrix, atom_masses::AbstractVector;
-                         n_threads::Int = Threads.nthreads(), D::Int = 3)
+                         n_threads::Int = Threads.nthreads(), D::Int = 3,
+                         verbose::Bool = true)
     
     N_atoms = Int(length(freqs) / D)
 
@@ -197,7 +201,7 @@ function canonical_configs!(output, f::Function, CM::ConfigSettings, freqs::Abst
     # Pre-scale modes by their amplitudes
     phi_A = phi_view_T .* mean_amplitude_matrix # D*N_atoms x D*N_atoms - D
 
-    p = Progress(CM.n_configs; desc="Generating Disps", dt = 0.25, color = :magenta)
+    p = Progress(CM.n_configs; desc="Generating Disps", dt = 0.25, color = :magenta, enabled = verbose)
     @tasks for n in 1:CM.n_configs
         @set begin
             ntasks = n_threads
@@ -219,7 +223,7 @@ function canonical_configs!(output, f::Function, CM::ConfigSettings, freqs::Abst
 
         next!(p)
     end
-    finish!(p)
+    verbose && finish!(p)
 
     return output
 end
