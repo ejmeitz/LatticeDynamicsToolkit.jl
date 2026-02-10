@@ -10,6 +10,17 @@ export
 
 q_cart_from_frac(cell::CrystalStructure, q_frac::SVector{3,Float64}) = 2pi .* (cell.L_inv' * q_frac)
 
+function precompute_ewald_parameters(ifc2::IFC2, uc::CrystalStructure)
+    if !ifc2.has_polar_data
+        return nothing
+    end
+
+    ew = EwaldParameters()
+    λ = ifc2.polar.lambda > 0 ? ifc2.polar.lambda : 0.5
+    set_ewald_parameters!(ew, uc, ifc2.polar.eps; strategy=3, lambda_forced=λ)
+    return ew
+end
+
 function check_hermetian(D, nb; name = "Dynamical matrix")
     c0 = 0.0
     for i in 1:nb
@@ -116,13 +127,11 @@ function add_longrange_ewald!(
     fc_uc.has_polar_data || return D_q
 
     ew = if ewald === nothing
-        e = EwaldParameters()
-        λ = fc_uc.polar.lambda > 0 ? fc_uc.polar.lambda : 0.5
-        set_ewald_parameters!(e, uc, fc_uc.polar.eps; strategy=3, lambda_forced=λ)
-        e
+        precompute_ewald_parameters(fc_uc, uc)
     else
         ewald
     end
+    ew === nothing && return D_q
 
     na = length(uc)
     compute_grad = dDdq !== nothing
@@ -175,9 +184,7 @@ function dynmat_gamma(fc_sc::IFC2, sc::CrystalStructure; include_polar::Bool=fc_
 
     # Add long-range dipole contribution at Γ when polar data present
     if include_polar && fc_sc.has_polar_data
-        ew = EwaldParameters()
-        λ = fc_sc.polar.lambda > 0 ? fc_sc.polar.lambda : 0.5
-        set_ewald_parameters!(ew, sc, fc_sc.polar.eps; strategy=3, lambda_forced=λ)
+        ew = precompute_ewald_parameters(fc_sc, sc)
         Φ_lr = supercell_longrange_forceconstant(ew, fc_sc.polar.born_Z, fc_sc.polar.eps, sc)
         @inbounds for a2 in 1:na, a1 in 1:na
             w = sc.invsqrtm[a1] * sc.invsqrtm[a2]
