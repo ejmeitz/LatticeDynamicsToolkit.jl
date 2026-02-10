@@ -42,15 +42,16 @@ end
 
     # Spot-check energies after remap
     u = [@SVector rand(3) for i in 1:new_ifc2.na]
-    e2, e3, e4 = energies(u, new_ifc2; fc3 = new_ifc3, fc4 = new_ifc4)
+    e2, e3, e4, ep = energies(u, new_ifc2; fc3 = new_ifc3, fc4 = new_ifc4)
     @test e2 > 0
     @test isfinite(e2)
+    @test ep ≈ 0.0 atol = 1e-12
 
     # Compare remapped IFC2 energies to TDEP-remapped file (when available)
     remapped_path = joinpath(basepath, "1300K_5UC_remapped", "outfile.forceconstant_remapped")
     if isfile(remapped_path)
         tdep_ifc2_remapped = read_ifc2(remapped_path, ssposcar_path)
-        e2_tdep, _, _ = energies(u, tdep_ifc2_remapped)
+        e2_tdep, _, _, _ = energies(u, tdep_ifc2_remapped)
         @test e2 ≈ e2_tdep rtol = 1e-10
     end
 end

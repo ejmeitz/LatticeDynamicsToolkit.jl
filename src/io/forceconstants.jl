@@ -6,8 +6,9 @@ export read_ifc2, read_ifc3, read_ifc4
     read_ifc2(ifc2_path, ucposcar_path)
     read_ifc2(path, r_frac_uc, L_uc) -> IFC2
 
-Read a 2nd-order outfile.forceconstant from TDEP. This follows the logic implemented in TDEP.
-Does NOT handle polar force constants.
+Read a 2nd-order `outfile.forceconstant` from TDEP. This follows the logic
+implemented in TDEP, including the optional polar (Born-charge / dielectric)
+block at the end of the file.
 
 Inputs
 - `path::AbstractString`: file path
@@ -82,9 +83,80 @@ function read_ifc2(
             data[a1] = pair_data
         end
 
-        # technically theres more polar stuff, but ignore that for now
+        # Optional polar block (Born effective charges, dielectric tensor, etc.)
+        #
+        # This mirrors the layout in TDEP's type_forceconstant_secondorder_io:
+        #  - integer flag / correction type
+        #  - 3 lines of dielectric tensor (3 numbers per line + commentary)
+        #  - lambda (Ewald parameter)
+        #  - nx_Z
+        #  - nx_Z lines of x_Z(i)
+        #  - na*9 lines of coeff_Z(i, 1..nx_Z)
+        #  - 3×3 Born effective charge tensor per atom (3 lines, 3 numbers each + commentary)
 
-        IFC2(na, max_rcut + lo_sqtol, data)
+        # If we are at EOF here, treat as a non-polar file.
+        if eof(io)
+            return IFC2(na, max_rcut + lo_sqtol, data, false, PolarIFC2(na))
+        end
+
+        # Read the polar/correction-type flag (0 = non-polar file)
+        polar_flag = readline_skip_text!(io, Int)
+
+        if polar_flag == 0
+            return IFC2(na, max_rcut + lo_sqtol, data, false, PolarIFC2(na))
+        end
+
+        # Dielectric tensor eps: three lines with three floats each followed by comments.
+        function _read_first3_svec3!(io)
+            xs = split(strip(readline(io)))
+            length(xs) >= 3 || error("Malformed polar block: expected at least 3 columns for a 3-vector.")
+            return SVector{3,Float64}(parse.(Float64, xs[1:3]))
+        end
+
+        eps_col1 = _read_first3_svec3!(io)
+        eps_col2 = _read_first3_svec3!(io)
+        eps_col3 = _read_first3_svec3!(io)
+        eps = SMatrix{3,3,Float64,9}(hcat(eps_col1, eps_col2, eps_col3))
+
+        lambda = readline_skip_text!(io, Float64)
+
+        nx_Z = readline_skip_text!(io, Int)
+        x_Z = Vector{Float64}(undef, nx_Z)
+        for i in 1:nx_Z
+            # First token on each line is the value, trailing comments (if any) are ignored.
+            x_Z[i] = readline_skip_text!(io, Float64)
+        end
+
+        coeff_Z = zeros(Float64, na*9, nx_Z)
+        for i in 1:(na*9)
+            xs = split(strip(readline(io)))
+            length(xs) >= nx_Z || error("Malformed polar block: expected at least $nx_Z columns for coeff_Z row.")
+            coeff_Z[i, :] .= parse.(Float64, xs[1:nx_Z])
+        end
+
+        # Born effective charges: for each atom, 3×3 matrix written as 3 lines of 3 numbers
+        # (with a trailing comment on the first line).
+        born_Z = zeros(Float64, 3, 3, na)
+        for a1 in 1:na
+            for row in 1:3
+                xs = split(strip(readline(io)))
+                length(xs) >= 3 || error("Malformed polar block: expected at least 3 columns for Born effective charge row.")
+                vals = parse.(Float64, xs[1:3])
+                @inbounds born_Z[:, row, a1] .= vals
+            end
+        end
+
+        polar = PolarIFC2(
+            polar_flag,
+            eps,
+            lambda,
+            nx_Z,
+            x_Z,
+            coeff_Z,
+            born_Z,
+        )
+
+        IFC2(na, max_rcut + lo_sqtol, data, true, polar)
     end
 end
 

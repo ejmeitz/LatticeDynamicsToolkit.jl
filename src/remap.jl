@@ -100,7 +100,42 @@ function remap(
         data[a1] = pair_data
     end
 
-    return IFC2(na_sc, fc.r_cut, data)   # or IFCs{2,T}(na_sc, fc.r_cut, data) if you store the cutoff in fc
+    # Remap polar information in the same spirit as TDEP, if present.
+    has_polar = fc.has_polar_data
+    polar_sc = PolarIFC2(na_sc)
+
+    if has_polar
+        src = fc.polar
+
+        # Allocate containers sized for the supercell.
+        coeff_Z_sc = zeros(Float64, na_sc * 9, src.nx_Z)
+        born_Z_sc  = zeros(Float64, 3, 3, na_sc)
+
+        # Copy Born effective charges and coeff_Z rows according to the unitcell mapping.
+        @inbounds for a1 in 1:na_sc
+            uca = s2u[a1]
+
+            # Born effective charges: 3×3 per atom
+            born_Z_sc[:, :, a1] .= src.born_Z[:, :, uca]
+
+            # coeff_Z: rows 3*(atom-1)+1:3*atom correspond to that atom
+            r_src = 3 * (uca - 1) + 1 : 3 * uca
+            r_sc  = 3 * (a1 - 1) + 1 : 3 * a1
+            coeff_Z_sc[r_sc, :] .= src.coeff_Z[r_src, :]
+        end
+
+        polar_sc = PolarIFC2(
+            src.correction_type,
+            src.eps,
+            src.lambda,
+            src.nx_Z,
+            copy(src.x_Z),
+            coeff_Z_sc,
+            born_Z_sc,
+        )
+    end
+
+    return IFC2(na_sc, fc.r_cut, data, has_polar, polar_sc)
 end
 
 

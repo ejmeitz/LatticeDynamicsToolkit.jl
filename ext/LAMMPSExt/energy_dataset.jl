@@ -21,9 +21,21 @@ function LatticeDynamicsToolkit.make_energy_dataset(
     verbose && @info "Remapping IFCs to Supercell"
     valid_ifcs_remapped = remap(sc, uc, valid_ifcs...)
     valid_ifcs_remapped_kwargs = LatticeDynamicsToolkit.build_kwargs(valid_ifcs_remapped...)
+
+    # Build dense long-range polar data once (TDEP fcp equivalent)
+    fcp = nothing
+    if isa(ifc2, IFC2) && valid_ifcs_remapped_kwargs.ifc2.has_polar_data
+        fcp = DensePolarIFCs(valid_ifcs_remapped_kwargs.ifc2, uc, sc)
+    end
     
-    return _make_energy_dataset(cc_settings, sc, make_calc; valid_ifcs_remapped_kwargs...,
-                                 n_threads = n_threads, verbose = verbose)
+    return _make_energy_dataset(
+            cc_settings,
+            sc, make_calc;
+            valid_ifcs_remapped_kwargs...,
+            fcp = fcp,
+            n_threads = n_threads,
+            verbose = verbose
+        )
 end
 
 # Quantum weight: w = sech²(ħω/2kT) = 4n(n+1)/(2n+1)²
@@ -56,6 +68,7 @@ function _make_energy_dataset(
     ifc2::Union{IFC2, AmorphousIFC2},
     ifc3::Union{Nothing, IFC3} = nothing,
     ifc4::Union{Nothing, IFC4} = nothing,
+    fcp::Union{Nothing,DensePolarIFCs} = nothing,
     n_threads::Integer = Threads.nthreads(),
     D::Int = 3,
     verbose::Bool = true     
@@ -85,14 +98,16 @@ function _make_energy_dataset(
     coeffs = _v2_tilde_coefficients(cc_settings, freqs_view, sigma_sq, atom_masses)
 
     # f(config, z) returns (energies, v2_tilde) - closure captures coeffs
+    # energies returns (e2, e3, e4, ep); TEP uses (e2+ep, e3, e4)
     f = (config, z) -> begin
-        tep = energies(config, ifc2; fc3=ifc3, fc4=ifc4, n_threads=1)
+        e2, e3, e4, ep = energies(config, ifc2; fc3=ifc3, fc4=ifc4, fcp=fcp, n_threads=1)
+        tep = SVector{4,Float64}(e2, e3, e4, ep)
         v2t = sum(coeffs[i] * z[i]^2 for i in eachindex(z))
         return (tep, v2t)
     end
 
     # Storage arrays
-    tep_energies = zeros(SVector{3, Float64}, cc_settings.n_configs)
+    tep_energies = zeros(SVector{4, Float64}, cc_settings.n_configs)
     V = zeros(Float64, cc_settings.n_configs)
     V2_tilde = zeros(Float64, cc_settings.n_configs)
 

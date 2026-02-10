@@ -15,6 +15,7 @@ using Statistics: mean
 import Random: randn!
 using HDF5
 using KrylovKit
+import SpecialFunctions: erfc
 using TDEPWrapper
 
 include("constants.jl")
@@ -31,6 +32,7 @@ include("io/tdep_io.jl")
 include("io/hdf5_io.jl")
 
 
+include("harmonic/dynmat_longrange.jl")
 include("harmonic/dynmat.jl")
 include("harmonic/thermo.jl")
 include("harmonic/dispersion.jl")

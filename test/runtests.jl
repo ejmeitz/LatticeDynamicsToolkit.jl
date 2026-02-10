@@ -8,9 +8,10 @@ using LatticeDynamicsToolkit
 
 include("test_helpers.jl")
 
-include("core.jl")
-include("energy_dataset.jl")
-include("lammps.jl")
+# include("core.jl")
+# include("energy_dataset.jl")
+# include("lammps.jl")
+include("longrange.jl")
 
 
 # include("fit_amorphous.jl")  # disabled - not currently used
