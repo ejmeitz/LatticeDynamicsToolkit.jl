@@ -84,6 +84,49 @@ struct DensePolarIFCs
     na::Int
 end
 
+"""
+    _reconstruct_unitcell_born_from_remapped(born_Z_sc, uc, sc) -> Array{Float64,3}
+
+Given remapped supercell Born charges `(3,3,na_sc)`, reconstruct the corresponding
+unit-cell-indexed Born charges `(3,3,na_uc)` using `map_super_to_unitcell(uc, sc)`.
+For parity/debug safety, all supercell images mapped to the same unit-cell atom are
+required to agree within `lo_tol`.
+"""
+function _reconstruct_unitcell_born_from_remapped(
+    born_Z_sc::AbstractArray{<:Real,3},
+    uc::CrystalStructure,
+    sc::CrystalStructure,
+)
+    na_uc = length(uc)
+    na_sc = length(sc)
+    size(born_Z_sc) == (3, 3, na_sc) || throw(ArgumentError(
+        "Expected remapped Born charges with size (3,3,$na_sc), got $(size(born_Z_sc))."
+    ))
+
+    s2u = map_super_to_unitcell(uc, sc)
+    born_Z_uc = zeros(Float64, 3, 3, na_uc)
+    filled = falses(na_uc)
+
+    @inbounds for a_sc in 1:na_sc
+        u = s2u[a_sc]
+        z = Float64.(born_Z_sc[:, :, a_sc])
+        if !filled[u]
+            born_Z_uc[:, :, u] .= z
+            filled[u] = true
+        else
+            # All SC images of one UC atom should carry identical Born tensors.
+            sum(abs.(born_Z_uc[:, :, u] .- z)) <= lo_tol || throw(ArgumentError(
+                "Inconsistent remapped Born charges for unit-cell atom $u while reconstructing unit-cell representation."
+            ))
+        end
+    end
+
+    all(filled) || throw(ArgumentError(
+        "Failed to reconstruct unit-cell-indexed Born charges from remapped polar data."
+    ))
+    return born_Z_uc
+end
+
 function DensePolarIFCs(fc2::IFC2, uc::CrystalStructure, sc::CrystalStructure)
     fc2.has_polar_data || throw(ArgumentError("DensePolarIFCs(fc2, uc, sc) requires IFC2 with polar data"))
     fc2.na == length(sc) || throw(ArgumentError(
@@ -91,9 +134,15 @@ function DensePolarIFCs(fc2::IFC2, uc::CrystalStructure, sc::CrystalStructure)
         "Try `remap(sc, uc, ifc2)` first."
     ))
     ew = EwaldParameters()
-    λ = fc2.polar.lambda > 0 ? fc2.polar.lambda : 0.5
+    λ = fc2.polar.lambda
+    λ > 0 || throw(ArgumentError("For TDEP parity, IFC2 polar lambda must be > 0; got λ=$(λ)."))
     set_ewald_parameters!(ew, uc, fc2.polar.eps; strategy=3, lambda_forced=λ)
-    fcp = supercell_longrange_forceconstant(ew, fc2.polar.born_Z, fc2.polar.eps, sc)
+    size(fc2.polar.born_Z, 3) == length(sc) || throw(ArgumentError(
+        "DensePolarIFCs expects remapped polar Born charges with size(born_Z,3)=length(sc). " *
+        "Got $(size(fc2.polar.born_Z, 3)) vs length(sc)=$(length(sc))."
+    ))
+    born_Z_uc = _reconstruct_unitcell_born_from_remapped(fc2.polar.born_Z, uc, sc)
+    fcp = supercell_longrange_forceconstant(ew, born_Z_uc, fc2.polar.eps, sc, uc)
     size(fcp) == (3, 3, length(sc), length(sc)) ||
         throw(ArgumentError("polar force constants must have size (3,3,na,na) for this supercell, got $(size(fcp))"))
     return DensePolarIFCs(fcp, length(sc))

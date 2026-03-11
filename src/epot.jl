@@ -206,10 +206,12 @@ function make_energy_dataset(
     fcp = nothing
     if isa(ifc2, IFC2) && valid_ifcs_remapped_kwargs.ifc2.has_polar_data
         fcp = DensePolarIFCs(valid_ifcs_remapped_kwargs.ifc2, uc, sc)
+        verbose && @info "Built dense polar IFCs" na=fcp.na lambda=valid_ifcs_remapped_kwargs.ifc2.polar.lambda
     end
 
     return _make_energy_dataset(
             cc_settings,
+            uc,
             sc;
             valid_ifcs_remapped_kwargs...,
             fcp = fcp,
@@ -221,6 +223,7 @@ end
 # Assumes IFCs are supercell already
 function _make_energy_dataset(
     cc_settings::ConfigSettings,
+    uc::CrystalStructure,
     sc::CrystalStructure;
     ifc2::Union{IFC2, AmorphousIFC2},
     ifc3::Union{Nothing, IFC3} = nothing,
@@ -233,13 +236,14 @@ function _make_energy_dataset(
 
     remap_checks(sc, valid_ifcs...)
 
-    dynmat = dynmat_gamma(ifc2, sc)
+    dynmat = dynmat_gamma(ifc2, uc, sc)
     freqs_sq, phi = get_modes(dynmat, Val{true}())
     freqs = sqrt.(freqs_sq)  # Will error for negative frequencies which I am ok with
 
     tep_energies = zeros(SVector{4, Float64}, cc_settings.n_configs)
 
     # Harmonic part for TEP is e2 + ep (short-range + polar); ep is 0 when fcp is nothing
+    verbose && @info "Preparing energy evaluations" has_polar_term=(fcp !== nothing) n_configs=cc_settings.n_configs
     f = (config) -> begin
         e2, e3, e4, ep = energies(config, ifc2; fc3=ifc3, fc4=ifc4, fcp=fcp, n_threads=1)
         return SVector{4,Float64}(e2, e3, e4, ep)

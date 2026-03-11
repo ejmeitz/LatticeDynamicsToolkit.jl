@@ -26,6 +26,7 @@ function LatticeDynamicsToolkit.make_energy_dataset(
     fcp = nothing
     if isa(ifc2, IFC2) && valid_ifcs_remapped_kwargs.ifc2.has_polar_data
         fcp = DensePolarIFCs(valid_ifcs_remapped_kwargs.ifc2, uc, sc)
+        verbose && @info "Built dense polar IFCs (LAMMPS dataset)" na=fcp.na lambda=valid_ifcs_remapped_kwargs.ifc2.polar.lambda
     end
     
     return _make_energy_dataset(
@@ -99,6 +100,7 @@ function _make_energy_dataset(
 
     # f(config, z) returns (energies, v2_tilde) - closure captures coeffs
     # energies returns (e2, e3, e4, ep); TEP uses (e2+ep, e3, e4)
+    verbose && @info "Preparing LAMMPS-backed energy evaluations" has_polar_term=(fcp !== nothing) n_configs=cc_settings.n_configs
     f = (config, z) -> begin
         e2, e3, e4, ep = energies(config, ifc2; fc3=ifc3, fc4=ifc4, fcp=fcp, n_threads=1)
         tep = SVector{4,Float64}(e2, e3, e4, ep)

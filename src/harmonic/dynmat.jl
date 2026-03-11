@@ -16,7 +16,8 @@ function precompute_ewald_parameters(ifc2::IFC2, uc::CrystalStructure)
     end
 
     ew = EwaldParameters()
-    λ = ifc2.polar.lambda > 0 ? ifc2.polar.lambda : 0.5
+    λ = ifc2.polar.lambda
+    λ > 0 || throw(ArgumentError("For TDEP parity, IFC2 polar lambda must be > 0; got λ=$(λ)."))
     set_ewald_parameters!(ew, uc, ifc2.polar.eps; strategy=3, lambda_forced=λ)
     return ew
 end
@@ -135,6 +136,21 @@ function add_longrange_ewald!(
 
     na = length(uc)
     compute_grad = dDdq !== nothing
+    q_gamma = SVector{3,Float64}(0.0, 0.0, 0.0)
+
+    # TDEP parity: include born_onsite_correction in long-range dynamical matrix.
+    D_gamma = longrange_dynamical_matrix(
+        ew, uc, q_gamma, fc_uc.polar.born_Z, fc_uc.polar.eps;
+        reconly=true,
+    )
+    born_onsite = zeros(Float64, 3, 3, na)
+    @inbounds for a1 in 1:na
+        m = zeros(Float64, 3, 3)
+        for a2 in 1:na
+            m .+= real.(D_gamma[:, :, a1, a2])
+        end
+        born_onsite[:, :, a1] .= -m
+    end
 
     if compute_grad
         D_lr = zeros(ComplexF64, 3, 3, na, na)
@@ -142,9 +158,13 @@ function add_longrange_ewald!(
         Dy_lr = zeros(ComplexF64, 3, 3, na, na)
         Dz_lr = zeros(ComplexF64, 3, 3, na, na)
         longrange_dynamical_matrix_with_gradient!(D_lr, Dx_lr, Dy_lr, Dz_lr,
-            ew, uc, q_frac, fc_uc.polar.born_Z, fc_uc.polar.eps)
+            ew, uc, q_frac, fc_uc.polar.born_Z, fc_uc.polar.eps;
+            reconly=true, born_onsite=born_onsite)
     else
-        D_lr = longrange_dynamical_matrix(ew, uc, q_frac, fc_uc.polar.born_Z, fc_uc.polar.eps)
+        D_lr = longrange_dynamical_matrix(
+            ew, uc, q_frac, fc_uc.polar.born_Z, fc_uc.polar.eps;
+            reconly=true, born_onsite=born_onsite
+        )
     end
 
     @inbounds for a2 in 1:na, a1 in 1:na
@@ -163,7 +183,12 @@ function add_longrange_ewald!(
     return D_q
 end
 
-function dynmat_gamma(fc_sc::IFC2, sc::CrystalStructure; include_polar::Bool=fc_sc.has_polar_data)
+function _dynmat_gamma_impl(
+    fc_sc::IFC2,
+    sc::CrystalStructure;
+    include_polar::Bool,
+    uc_polar::Union{Nothing,CrystalStructure},
+)
 
     na = length(sc)
     nb = 3*na
@@ -184,8 +209,9 @@ function dynmat_gamma(fc_sc::IFC2, sc::CrystalStructure; include_polar::Bool=fc_
 
     # Add long-range dipole contribution at Γ when polar data present
     if include_polar && fc_sc.has_polar_data
-        ew = precompute_ewald_parameters(fc_sc, sc)
-        Φ_lr = supercell_longrange_forceconstant(ew, fc_sc.polar.born_Z, fc_sc.polar.eps, sc)
+        uc_polar === nothing && error("For TDEP parity, `dynmat_gamma` with polar IFCs requires unit cell `uc`.")
+        ew = precompute_ewald_parameters(fc_sc, uc_polar)
+        Φ_lr = supercell_longrange_forceconstant(ew, fc_sc.polar.born_Z, fc_sc.polar.eps, sc, uc_polar)
         @inbounds for a2 in 1:na, a1 in 1:na
             w = sc.invsqrtm[a1] * sc.invsqrtm[a2]
             r1, r2 = 3*(a1-1)+1, 3*(a2-1)+1
@@ -201,6 +227,26 @@ function dynmat_gamma(fc_sc::IFC2, sc::CrystalStructure; include_polar::Bool=fc_
 
     return Hermitian(D)
 
+end
+
+function dynmat_gamma(
+    fc_sc::IFC2,
+    sc::CrystalStructure;
+    include_polar::Bool=fc_sc.has_polar_data,
+)
+    if include_polar && fc_sc.has_polar_data
+        error("For TDEP parity, call `dynmat_gamma(fc_sc, uc, sc; include_polar=true)` with explicit unit cell.")
+    end
+    return _dynmat_gamma_impl(fc_sc, sc; include_polar=include_polar, uc_polar=nothing)
+end
+
+function dynmat_gamma(
+    fc_sc::IFC2,
+    uc::CrystalStructure,
+    sc::CrystalStructure;
+    include_polar::Bool=fc_sc.has_polar_data,
+)
+    return _dynmat_gamma_impl(fc_sc, sc; include_polar=include_polar, uc_polar=uc)
 end
 
 

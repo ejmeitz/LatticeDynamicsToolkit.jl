@@ -497,6 +497,8 @@ function pretransform_phi3!(
             lv2 = trip.lvs[2]
             lv3 = trip.lvs[3]
             
+            # TDEP parity: phase is -2π*(q_frac·R). Here q*_cart already includes 2π
+            # via q_cart_from_frac, so we must NOT multiply by 2π again.
             iqr = -dot(q2_cart, lv2) - dot(q3_cart, lv3)
             expiqr = cis(iqr)  # exp(i*iqr)
             
@@ -543,6 +545,7 @@ function pretransform_phi4!(
             #! SHOULD PROBABLY PRE-MASS WEIGHT THE IFCs
             m_factor = m1 * uc.invsqrtm[a2] * uc.invsqrtm[a3] * uc.invsqrtm[a4]
             
+            # Same convention as pretransform_phi3!: q*_cart already carries 2π.
             iqr = -dot(q1_cart, quartet.lvs[2]) +
                    dot(q2_cart, quartet.lvs[3]) -
                    dot(q2_cart, quartet.lvs[4])

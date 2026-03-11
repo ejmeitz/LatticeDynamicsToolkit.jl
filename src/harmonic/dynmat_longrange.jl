@@ -81,6 +81,22 @@ function EwaldParameters()
                     zeros(3, 0), zeros(3, 0))
 end
 
+"""
+    _brent_root(f, a, b; atol, maxiters=1000, context="")
+
+Bracketed root solve using Brent with explicit residual check. Keeps failure
+messages contextual and consistent across Ewald parameter solves.
+"""
+function _brent_root(f, a::Real, b::Real; atol::Real, maxiters::Int=1000, context::AbstractString="")
+    root = Roots.find_zero(
+        f, (Float64(a), Float64(b)), Roots.Brent();
+        atol=Float64(atol), rtol=0.0,
+        maxiters=maxiters,
+    )
+    abs(f(root)) < atol || error("Could not converge $(context)")
+    return root
+end
+
 # -----------------------------------------------------------------------------
 # Ewald dipole K and R radii (TDEP: ewald_dipole_k_r)
 # -----------------------------------------------------------------------------
@@ -89,10 +105,10 @@ function _ewald_dipole_k_r(lambda::Float64, pts::AbstractMatrix, eps::AbstractMa
                            inveps::AbstractMatrix, L::AbstractMatrix, L_rec::AbstractMatrix,
                            tol::Float64)::Tuple{Float64,Float64}
     inv4lam2 = 1.0 / (4.0 * lambda * lambda)
-    invdete = 1.0 / sqrt(abs(det(eps)))
+    invdete = 1.0 / sqrt(det(eps))
     npts = size(pts, 2)
 
-    # Find krad: radius where sum exp(-K²/4λ²)*K² over sphere = tol (f increases with r)
+    # Find krad: radius where sum exp(-K²/4λ²)*K² over sphere = tol
     k_inscribed = inscribed_sphere_in_box(L_rec)
     f_k(r) = sum(i -> begin
         v = SVector{3,Float64}(pts[1,i]*r*TWOPI, pts[2,i]*r*TWOPI, pts[3,i]*r*TWOPI)
@@ -101,39 +117,39 @@ function _ewald_dipole_k_r(lambda::Float64, pts::AbstractMatrix, eps::AbstractMa
     end, 1:npts) - tol
 
     k0 = k_inscribed * 1e-9
-    k1 = k_inscribed * 0.5
-    for _ in 1:20
-        f_k(k1) >= tol && break
-        k1 = min(k1 * 2, k_inscribed * 10)
-    end
-    for _ in 1:100
-        kmid = 0.5 * (k0 + k1)
-        abs(f_k(kmid)) < tol * 1e-2 && (k0 = kmid; break)
-        f_k(k0) * f_k(kmid) < 0 ? (k1 = kmid) : (k0 = kmid)
-    end
-    krad = 0.5 * (k0 + k1) + bounding_sphere_of_box(L_rec)
+    k1 = k_inscribed * 1e9
+    fk0 = f_k(k0)
+    fk1 = f_k(k1)
+    fk0 * fk1 > 0 && error("Could not bracket K-space radius in _ewald_dipole_k_r")
+    kroot = _brent_root(
+        f_k, k0, k1;
+        atol=tol * 1e-3,
+        maxiters=1000,
+        context="K-space radius in _ewald_dipole_k_r",
+    )
+    krad = kroot + bounding_sphere_of_box(L_rec)
 
     # Find rrad: real-space decay radius
-    f_r(r) = (sum(i -> begin
+    f_r(r) = sum(i -> begin
         v = inveps * SVector{3,Float64}(pts[1,i]*r, pts[2,i]*r, pts[3,i]*r)
         rr = SVector{3,Float64}(pts[1,i]*r, pts[2,i]*r, pts[3,i]*r)
-        D = sqrt(max(1e-20, dot(v, rr)))
+        D = sqrt(dot(v, rr))
         (lambda^3) * sum(abs, ewald_H_thingy(SVector{3,Float64}(lambda .* v), lambda * D, inveps)) * invdete
-    end, 1:npts) / npts) - tol
+    end, 1:npts) - tol
 
     r_inscribed = inscribed_sphere_in_box(L)
-    r0 = r_inscribed * 0.01
-    r1 = r_inscribed * 4
-    for _ in 1:15
-        f_r(r1) <= 0 && break
-        r1 = min(r1 * 2, r_inscribed * 100)
-    end
-    for _ in 1:80
-        rmid = 0.5 * (r0 + r1)
-        abs(f_r(rmid)) < tol * 0.1 && (r0 = rmid; break)
-        f_r(r0) * f_r(rmid) < 0 ? (r1 = rmid) : (r0 = rmid)
-    end
-    rrad = max(0.5 * (r0 + r1), r_inscribed * 0.5) + bounding_sphere_of_box(L)
+    r0 = r_inscribed * 1e-4
+    r1 = r_inscribed * 1e4
+    fr0 = f_r(r0)
+    fr1 = f_r(r1)
+    fr0 * fr1 > 0 && error("Could not bracket R-space radius in _ewald_dipole_k_r")
+    rroot = _brent_root(
+        f_r, r0, r1;
+        atol=tol * 1e-3,
+        maxiters=1000,
+        context="R-space radius in _ewald_dipole_k_r",
+    )
+    rrad = rroot + bounding_sphere_of_box(L)
     return krad, rrad
 end
 
@@ -181,7 +197,7 @@ end
 
 """
     set_ewald_parameters!(ew::EwaldParameters, uc::CrystalStructure, eps::AbstractMatrix;
-                         strategy::Int=1, tol::Float64=1e-8, lambda_forced::Union{Nothing,Float64}=nothing)
+                         strategy::Int=1, tol::Float64=1e-20, lambda_forced::Union{Nothing,Float64}=nothing)
 
 Fill Ewald parameters for unit cell and dielectric tensor.
 - strategy 1: optimize λ for speed (balance K vs R sums)
@@ -189,13 +205,11 @@ Fill Ewald parameters for unit cell and dielectric tensor.
 - strategy 3: use lambda_forced
 """
 function set_ewald_parameters!(ew::EwaldParameters, uc::CrystalStructure, eps::AbstractMatrix;
-                              strategy::Int=1, tol::Float64=1e-8,
+                              strategy::Int=1, tol::Float64=1e-20,
                               lambda_forced::Union{Nothing,Float64}=nothing)
     L = uc.L
-    L_rec = TWOPI * inv(L)'  # reciprocal lattice vectors as columns
-    # Cap radii for very small cells to avoid huge loops
-    k_insc = inscribed_sphere_in_box(L_rec)
-    r_insc = inscribed_sphere_in_box(L)
+    # TDEP's reciprocal basis here is WITHOUT 2π; factors are applied inside kernels.
+    L_rec = inv(L)'  # reciprocal lattice vectors as columns
     ew.eps = SMatrix{3,3}(eps)
     ew.inveps = SMatrix{3,3}(inv(eps))
 
@@ -206,28 +220,29 @@ function set_ewald_parameters!(ew::EwaldParameters, uc::CrystalStructure, eps::A
         lambda = lambda_forced
     elseif strategy == 1
         # Balance n_R and n_G: find lambda where (nR - nG)/(nR + nG) ≈ 0
-        y(x) = begin
+        y1(x) = begin
             kr, rr = _ewald_dipole_k_r(x, pts, eps, ew.inveps, L, L_rec, tol)
             nR = 4 * (4π/3) * rr^3 / abs(det(L))
             nG = (4π/3) * kr^3 * abs(det(L))
             (nR - nG) / (nR + nG + 1e-30)
         end
         x0, x1 = 0.3, 3.0
+        has_bracket = false
         for _ in 1:30
-            y0, y1 = y(x0), y(x1)
-            if y0 * y1 < 0
+            ylo, yhi = y1(x0), y1(x1)
+            if ylo * yhi < 0
+                has_bracket = true
                 break
             end
-            y0 > 0 ? (x0 *= 0.5) : (x1 *= 2)
+            ylo > 0 ? (x0 *= 0.5) : (x1 *= 2)
         end
-        for _ in 1:80
-            xmid = 0.5 * (x0 + x1)
-            ymid = y(xmid)
-            abs(ymid) < 1e-3 && (lambda = xmid; break)
-            y(x0) * ymid < 0 ? (x1 = xmid) : (x0 = xmid)
-            lambda = xmid
-        end
-        lambda <= 0 && (lambda = 0.5 * (x0 + x1))
+        has_bracket || error("Could not bracket lambda for strategy=1")
+        lambda = _brent_root(
+            y1, x0, x1;
+            atol=1e-3,
+            maxiters=1000,
+            context="lambda for strategy=1",
+        )
     else
         # strategy 2: range separation
         nn_dist = minimum(norm(uc.x_cart[i] - uc.x_cart[j]) for i in 1:length(uc) for j in (i+1):length(uc))
@@ -235,41 +250,35 @@ function set_ewald_parameters!(ew::EwaldParameters, uc::CrystalStructure, eps::A
         invdete = 1.0 / sqrt(det(eps))
         pts = _points_on_sphere(40)
         l0, l1 = 10.0, 1e-8
-        for _ in 1:100
-            lmid = sqrt(l0 * l1)
-            y = 0.0
+        y2(lmid) = begin
+            acc = 0.0
             for i in 1:size(pts,2)
                 v = ew.inveps * (pts[:,i] * r_target)
                 D = sqrt(dot(v, pts[:,i] * r_target))
-                y += (lmid^3) * sum(abs, ewald_H_thingy(SVector{3}(lmid .* v), lmid*D, ew.inveps)) * invdete
+                acc += (lmid^3) * sum(abs, ewald_H_thingy(SVector{3}(lmid .* v), lmid*D, ew.inveps)) * invdete
             end
-            y = y / size(pts,2) - 1e-5
-            if abs(y) < 1e-8
-                lambda = lmid
-                break
-            end
-            y > 0 ? (l0 = lmid) : (l1 = lmid)
-            lambda = lmid
+            acc / size(pts,2) - 1e-5
         end
+        y0, y1 = y2(l0), y2(l1)
+        y0 * y1 < 0 || error("Could not bracket lambda for strategy=2")
+        lambda = _brent_root(
+            y2, l0, l1;
+            atol=1e-11,
+            maxiters=1000,
+            context="lambda for strategy=2",
+        )
     end
 
     ew.lambda = lambda
 
     # Get krad, rrad
-    if strategy == 3
-        # Heuristic radii when lambda is provided (skip expensive root-finding)
-        # Cap to avoid huge R/G sets for small cells
-        krad = min(2.0 / max(lambda, 0.2), k_insc * 4) + bounding_sphere_of_box(L_rec)
-        rrad = min(r_insc * 2.5, r_insc * 6) + bounding_sphere_of_box(L)
-    else
-        krad, rrad = _ewald_dipole_k_r(lambda, pts, eps, ew.inveps, L, L_rec, tol)
-    end
+    krad, rrad = _ewald_dipole_k_r(lambda, pts, eps, ew.inveps, L, L_rec, tol)
 
     # Build R vectors
     bd = [1, 1, 1]
-    for _ in 1:50
+    while true
         m0 = hcat([L[:,j] * (2*bd[j] + 1) for j in 1:3]...)
-        if inscribed_sphere_in_box(m0) > rrad || maximum(bd) > 15
+        if inscribed_sphere_in_box(m0) > rrad
             break
         end
         bd = _increment_dimensions(bd, L)
@@ -293,9 +302,9 @@ function set_ewald_parameters!(ew::EwaldParameters, uc::CrystalStructure, eps::A
 
     # Build G vectors
     bd = [1, 1, 1]
-    for _ in 1:50
+    while true
         m0 = hcat([L_rec[:,j] * (2*bd[j] + 1) for j in 1:3]...)
-        if inscribed_sphere_in_box(m0) > krad || maximum(bd) > 15
+        if inscribed_sphere_in_box(m0) > krad
             break
         end
         bd = _increment_dimensions(bd, L_rec)
@@ -305,7 +314,7 @@ function set_ewald_parameters!(ew::EwaldParameters, uc::CrystalStructure, eps::A
     for i in -bd[1]:bd[1], j in -bd[2]:bd[2], k in -bd[3]:bd[3]
         v_frac = SVector{3,Float64}(Float64(i), Float64(j), Float64(k))
         v_cart = L_rec * v_frac
-        if sqnorm(v_cart) < k2 && sqnorm(v_cart) > lo_sqtol
+        if sqnorm(v_cart) < k2
             push!(Glist, v_cart)
         end
     end
@@ -325,7 +334,7 @@ end
 # -----------------------------------------------------------------------------
 
 """
-    longrange_dynamical_matrix!(D, ew, uc, q_frac, born_Z, eps; reconly=false)
+    longrange_dynamical_matrix!(D, ew, uc, q_frac, born_Z, eps; reconly=false, born_onsite=nothing)
 
 Compute dipole-dipole long-range dynamical matrix D(q) in-place (no derivatives).
 For D and ∂D/∂q_cart, use `longrange_dynamical_matrix_with_gradient!`.
@@ -340,10 +349,11 @@ function longrange_dynamical_matrix!(
     born_Z::AbstractArray{<:Real,3},
     eps::AbstractMatrix;
     reconly::Bool=false,
+    born_onsite::Union{Nothing,AbstractArray{<:Real,3}}=nothing,
 )
     _longrange_dynamical_matrix_impl!(
         D, ew, uc, q_frac, born_Z, eps;
-        born_onsite=nothing,
+        born_onsite=born_onsite,
         reconly=reconly,
         chgmult=true,
         compute_grad=false,
@@ -354,7 +364,7 @@ function longrange_dynamical_matrix!(
 end
 
 """
-    longrange_dynamical_matrix_with_gradient!(D, Dx, Dy, Dz, ew, uc, q_frac, born_Z, eps; reconly=false)
+    longrange_dynamical_matrix_with_gradient!(D, Dx, Dy, Dz, ew, uc, q_frac, born_Z, eps; reconly=false, born_onsite=nothing)
 
 Compute dipole-dipole long-range dynamical matrix D(q) and its Cartesian derivatives
 ∂D/∂q_cart (returned in Dx, Dy, Dz) in-place.
@@ -372,10 +382,11 @@ function longrange_dynamical_matrix_with_gradient!(
     born_Z::AbstractArray{<:Real,3},
     eps::AbstractMatrix;
     reconly::Bool=false,
+    born_onsite::Union{Nothing,AbstractArray{<:Real,3}}=nothing,
 )
     _longrange_dynamical_matrix_impl!(
         D, ew, uc, q_frac, born_Z, eps;
-        born_onsite=nothing,
+        born_onsite=born_onsite,
         reconly=reconly,
         chgmult=true,
         compute_grad=true,
@@ -409,15 +420,21 @@ function _longrange_dynamical_matrix_impl!(
         @assert size(Dx) == size(Dy) == size(Dz) == size(D)
     end
 
-    q_cart = TWOPI * (uc.L_inv' * q_frac)
+    # Use shared conversion helper, then map to TDEP's internal no-2π basis.
+    q_cart_twopi = q_cart_from_frac(uc, q_frac)       # includes 2π
+    q_cart = q_cart_twopi / TWOPI                     # no-2π basis
     x_cart = uc.x_cart
-    inveps = ew.inveps
+    inveps = SMatrix{3,3,Float64}(inv(eps))
+    inveps = SMatrix{3,3,Float64}(chop.(inveps, Ref(lo_sqtol)))
     dete = 1.0 / sqrt(det(eps))
     mult = chgmult
+    if born_onsite !== nothing
+        @assert size(born_onsite) == (3, 3, na)
+    end
     onsite = something(born_onsite, zeros(3, 3, na))
 
     npair = na * (na + 1) ÷ 2
-    ucvl = [chop3(x_cart[a2] - x_cart[a1], sqrt(lo_sqtol)) for a1 in 1:na for a2 in a1:na]
+    ucvl = [chop3(x_cart[a2] - x_cart[a1], lo_sqtol) for a1 in 1:na for a2 in a1:na]
 
     inv4lam2 = 1.0 / (4.0 * ew.lambda^2)
     lambdacub = ew.lambda^3
@@ -436,8 +453,8 @@ function _longrange_dynamical_matrix_impl!(
     # Reciprocal space
     for ig in 1:size(ew.Gvec, 2)
         G = SVector{3,Float64}(ew.Gvec[1,ig], ew.Gvec[2,ig], ew.Gvec[3,ig])
-        K = chop3(G + q_cart, sqrt(lo_sqtol))
-        if sqnorm(K) < lo_sqtol
+        K = chop3((G + q_cart) * TWOPI, lo_sqtol)
+        if sqnorm(K) < lo_sqtol^2
             continue
         end
         knorm = dot(K, eps * K)
@@ -484,8 +501,8 @@ function _longrange_dynamical_matrix_impl!(
         for ir in 1:size(ew.Rvec, 2)
             R = SVector{3,Float64}(ew.Rvec[1,ir], ew.Rvec[2,ir], ew.Rvec[3,ir])
             for ip in 1:npair
-                Dvec = chop3(R + ucvl[ip], sqrt(lo_sqtol))
-                ikr = dot(q_cart, R)
+                Dvec = chop3(R + ucvl[ip], lo_sqtol)
+                ikr = dot(q_cart_twopi, R)
                 expikr = cis(ikr)
                 delta = inveps * Dvec
                 bigD = sqrt(dot(delta, Dvec))
@@ -528,13 +545,11 @@ function _longrange_dynamical_matrix_impl!(
                 Dy0[:, :, a1, a2] = DQLy1[ip] - DQLy2[ip]
                 Dz0[:, :, a1, a2] = DQLz1[ip] - DQLz2[ip]
             end
-            for i in 1:3, j in 1:3
-                D0[j, i, a2, a1] = conj(D0[i, j, a1, a2])
-                if compute_grad
-                    Dx0[j, i, a2, a1] = conj(Dx0[i, j, a1, a2])
-                    Dy0[j, i, a2, a1] = conj(Dy0[i, j, a1, a2])
-                    Dz0[j, i, a2, a1] = conj(Dz0[i, j, a1, a2])
-                end
+            D0[:, :, a2, a1] = adjoint(D0[:, :, a1, a2])
+            if compute_grad
+                Dx0[:, :, a2, a1] = adjoint(Dx0[:, :, a1, a2])
+                Dy0[:, :, a2, a1] = adjoint(Dy0[:, :, a1, a2])
+                Dz0[:, :, a2, a1] = adjoint(Dz0[:, :, a1, a2])
             end
         end
     end
@@ -546,14 +561,14 @@ function _longrange_dynamical_matrix_impl!(
             Dy .= 0
             Dz .= 0
         end
-        for a2 in 1:na, a1 in 1:na, j in 1:3, i in 1:3
-            for jj in 1:3, ii in 1:3
-                D[i, j, a1, a2] += born_Z[i, ii, a1] * born_Z[j, jj, a2] * D0[ii, jj, a1, a2]
-                if compute_grad
-                    Dx[i, j, a1, a2] += born_Z[i, ii, a1] * born_Z[j, jj, a2] * Dx0[ii, jj, a1, a2]
-                    Dy[i, j, a1, a2] += born_Z[i, ii, a1] * born_Z[j, jj, a2] * Dy0[ii, jj, a1, a2]
-                    Dz[i, j, a1, a2] += born_Z[i, ii, a1] * born_Z[j, jj, a2] * Dz0[ii, jj, a1, a2]
-                end
+        for a2 in 1:na, a1 in 1:na
+            B1 = @view born_Z[:, :, a1]
+            B2 = @view born_Z[:, :, a2]
+            D[:, :, a1, a2] .= B1 * (@view D0[:, :, a1, a2]) * transpose(B2)
+            if compute_grad
+                Dx[:, :, a1, a2] .= B1 * (@view Dx0[:, :, a1, a2]) * transpose(B2)
+                Dy[:, :, a1, a2] .= B1 * (@view Dy0[:, :, a1, a2]) * transpose(B2)
+                Dz[:, :, a1, a2] .= B1 * (@view Dz0[:, :, a1, a2]) * transpose(B2)
             end
         end
         for a1 in 1:na
@@ -568,25 +583,23 @@ function _longrange_dynamical_matrix_impl!(
         end
     end
 
-    chop!(D, sqrt(lo_sqtol))
-    if compute_grad
-        chop!(Dx, sqrt(lo_sqtol))
-        chop!(Dy, sqrt(lo_sqtol))
-        chop!(Dz, sqrt(lo_sqtol))
-    end
+    chop!(D, lo_sqtol)
     return D
 end
 
 """
-    longrange_dynamical_matrix(ew, uc, q_frac, born_Z, eps; reconly=false) -> Array{ComplexF64,4}
+    longrange_dynamical_matrix(ew, uc, q_frac, born_Z, eps; reconly=false, born_onsite=nothing) -> Array{ComplexF64,4}
 
 Allocating version returning (3,3,na,na) complex dynamical matrix.
 """
 function longrange_dynamical_matrix(ew::EwaldParameters, uc::CrystalStructure,
-    q_frac::SVector{3,Float64}, born_Z::AbstractArray, eps::AbstractMatrix; reconly::Bool=false)
+    q_frac::SVector{3,Float64}, born_Z::AbstractArray, eps::AbstractMatrix;
+    reconly::Bool=false,
+    born_onsite::Union{Nothing,AbstractArray{<:Real,3}}=nothing,
+)
     na = length(uc)
     D = zeros(ComplexF64, 3, 3, na, na)
-    longrange_dynamical_matrix!(D, ew, uc, q_frac, born_Z, eps; reconly=reconly)
+    longrange_dynamical_matrix!(D, ew, uc, q_frac, born_Z, eps; reconly=reconly, born_onsite=born_onsite)
     return D
 end
 
@@ -598,7 +611,8 @@ Convenience: use polar data from IFC2. Returns nothing if `has_polar_data` is fa
 function longrange_dynamical_matrix(ifc2::IFC2, uc::CrystalStructure, q_frac::SVector{3,Float64}; reconly::Bool=false)
     ifc2.has_polar_data || return nothing
     ew = EwaldParameters()
-    λ = ifc2.polar.lambda > 0 ? ifc2.polar.lambda : 0.5  # fallback if unset
+    λ = ifc2.polar.lambda
+    λ > 0 || throw(ArgumentError("For TDEP parity, IFC2 polar lambda must be > 0; got λ=$(λ)."))
     set_ewald_parameters!(ew, uc, ifc2.polar.eps; strategy=3, lambda_forced=λ)
     longrange_dynamical_matrix(ew, uc, q_frac, ifc2.polar.born_Z, ifc2.polar.eps; reconly=reconly)
 end
@@ -608,21 +622,28 @@ end
 # -----------------------------------------------------------------------------
 
 """
-    supercell_longrange_forceconstant(ew, born_Z, eps, sc::CrystalStructure; thres=1e-8) -> Array{Float64,4}
+    supercell_longrange_forceconstant(ew, born_Z, eps, sc::CrystalStructure, uc::CrystalStructure; thres=1e-8) -> Array{Float64,4}
 
 Long-range contribution to force constants at Γ for supercell.
 Returns real (3,3,na,na) - add to short-range IFCs for full force constants.
 """
 function supercell_longrange_forceconstant(ew::EwaldParameters, born_Z::AbstractArray,
-    eps::AbstractMatrix, sc::CrystalStructure; thres::Float64=1e-8)
+    eps::AbstractMatrix, sc::CrystalStructure, uc::CrystalStructure;
+    thres::Float64=1e-8,
+)
     na = length(sc)
-    L_rec = TWOPI * inv(sc.L)'
+    # Keep reciprocal basis convention consistent with TDEP (no 2π here).
+    L_rec = inv(sc.L)'
     inv4lam2 = 1.0 / (4.0 * ew.lambda^2)
+    na_uc = length(uc)
+    size(born_Z, 3) == na_uc || error("For TDEP parity, born_Z must be unit-cell indexed: size(born_Z,3)=$(size(born_Z,3)) but length(uc)=$na_uc.")
+    s2u = map_super_to_unitcell(uc, sc)
 
     # G-vectors in reciprocal space (Gamma: q=0)
+    pts = _points_on_sphere(20)
     krad = inscribed_sphere_in_box(L_rec) * 0.5
-    for iter in 1:1000
-        pts = _points_on_sphere(20)
+    krad_converged = false
+    for _ in 1:100000
         dampsum = 0.0
         for i in 1:size(pts,2)
             v = SVector{3,Float64}(pts[1,i], pts[2,i], pts[3,i]) * krad * TWOPI
@@ -630,14 +651,16 @@ function supercell_longrange_forceconstant(ew::EwaldParameters, born_Z::Abstract
             dampsum += exp(-knorm * inv4lam2) * knorm
         end
         if dampsum <= thres
+            krad_converged = true
             break
         end
         krad += krad * 0.25
     end
+    krad_converged || error("Could not converge krad in supercell_longrange_forceconstant")
 
     ndim = 0
     for i in 1:100
-        ndim = i
+        ndim += 1
         m0 = [L_rec[:,j] * (2*ndim + 1) for j in 1:3]
         m0 = hcat(m0...)
         if inscribed_sphere_in_box(m0) > krad + lo_tol
@@ -647,25 +670,51 @@ function supercell_longrange_forceconstant(ew::EwaldParameters, born_Z::Abstract
 
     k2 = krad^2
     qvecs = SVector{3,Float64}[]
-    for i in -ndim:ndim, j in -ndim:ndim, k in -ndim:ndim
-        v = L_rec * SVector{3,Float64}(Float64(i), Float64(j), Float64(k))
-        if sqnorm(v) < k2 && sqnorm(v) > lo_sqtol
-            push!(qvecs, v)
+    nvec_total = (2 * ndim + 1)^3
+    nvec_stop = (nvec_total + 1) ÷ 2
+    ctrtot = 0
+    done = false
+    for i in -ndim:ndim
+        for j in -ndim:ndim
+            for k in -ndim:ndim
+                v = L_rec * SVector{3,Float64}(Float64(i), Float64(j), Float64(k))
+                if sqnorm(v) < k2 && sqnorm(v) > lo_sqtol
+                    push!(qvecs, v)
+                end
+                ctrtot += 1
+                if ctrtot == nvec_stop
+                    done = true
+                    break
+                end
+            end
+            done && break
         end
+        done && break
     end
     nvec = length(qvecs)
 
-    # All pair deltas (Cartesian); build mapping for unique deltas
-    pair_deltas = [chop3(sc.x_cart[a2] - sc.x_cart[a1], sqrt(lo_sqtol))
-                   for a1 in 1:na for a2 in a1:na]
-    # Unique deltas with tolerance
-    deltavec = SVector{3,Float64}[]
+    # Build delta vectors like TDEP: wrapped fractional deltas with unit-cell indices in key
+    pair_keys = SVector{5,Float64}[]
+    pair_delta_cart = SVector{3,Float64}[]
+    for a1 in 1:na, a2 in a1:na
+        dfrac = sc.x_frac[a2] - sc.x_frac[a1]
+        dfrac = clean_fractional_coordinates.(dfrac .+ 0.5; tol=lo_tol) .- 0.5
+        uca1 = s2u[a1]
+        uca2 = s2u[a2]
+        key = SVector{5,Float64}(dfrac[1], dfrac[2], dfrac[3], Float64(uca1), Float64(uca2))
+        push!(pair_keys, key)
+        push!(pair_delta_cart, sc.L * SVector{3,Float64}(dfrac[1], dfrac[2], dfrac[3]))
+    end
+
     deltavecind = Int[]
-    for (ip, d) in enumerate(pair_deltas)
-        idx = findfirst(dv -> sqnorm(dv - d) < lo_sqtol, deltavec)
+    unique_keys = SVector{5,Float64}[]
+    deltavec = SVector{3,Float64}[]
+    for ip in eachindex(pair_keys)
+        idx = findfirst(k -> sum(abs.(k - pair_keys[ip])) <= lo_tol, unique_keys)
         if idx === nothing
-            push!(deltavec, d)
-            push!(deltavecind, length(deltavec))
+            push!(unique_keys, pair_keys[ip])
+            push!(deltavec, pair_delta_cart[ip])
+            push!(deltavecind, length(unique_keys))
         else
             push!(deltavecind, idx)
         end
@@ -692,32 +741,31 @@ function supercell_longrange_forceconstant(ew::EwaldParameters, born_Z::Abstract
         pp = deltavecind[ip]
         dm[:, :, a1, a2] = rDL[pp]
         if a1 != a2
-            for i in 1:3, j in 1:3
-                dm[j, i, a2, a1] = dm[i, j, a1, a2]
-            end
+            dm[:, :, a2, a1] = transpose(dm[:, :, a1, a2])
         end
     end
 
     chop!(dm, 1e-13)
 
-    # Multiply in Born charges (use unit-cell indices for polar data)
-    # For supercell we need index_in_unitcell; if sc is just a repetition, uca = ((a-1) % na_uc) + 1
-    na_uc = size(born_Z, 3)
+    # Multiply in Born charges
     forceconstant = zeros(Float64, 3, 3, na, na)
     for a2 in 1:na, a1 in 1:na
-        uca1 = ((a1 - 1) % na_uc) + 1
-        uca2 = ((a2 - 1) % na_uc) + 1
-        m0 = zeros(3, 3)
-        for j in 1:3, i in 1:3, jj in 1:3, ii in 1:3
-            m0[i, j] += born_Z[i, ii, uca1] * born_Z[j, jj, uca2] * dm[ii, jj, a1, a2]
-        end
-        forceconstant[:, :, a1, a2] = m0
+        uca1 = s2u[a1]
+        uca2 = s2u[a2]
+        B1 = @view born_Z[:, :, uca1]
+        B2 = @view born_Z[:, :, uca2]
+        Dblock = @view dm[:, :, a1, a2]
+        forceconstant[:, :, a1, a2] .= B1 * Dblock * transpose(B2)
     end
 
-    # On-site correction: Φ_ii = -Σ_{j≠i} Φ_ij (ASR-like for long-range)
+    # On-site correction (same formula/order as TDEP)
+    dm0 = copy(forceconstant)
     for a1 in 1:na
-        s = sum(forceconstant[:, :, a1, a2] for a2 in 1:na if a2 != a1)
-        forceconstant[:, :, a1, a1] -= s
+        m0 = zeros(3, 3)
+        for a2 in 1:na
+            m0 .+= dm0[:, :, a1, a2]
+        end
+        forceconstant[:, :, a1, a1] .-= m0
     end
 
     return forceconstant
