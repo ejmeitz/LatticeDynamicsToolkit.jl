@@ -27,7 +27,7 @@ function remap_checks(
     n_uc_ifc = [ifc.na for ifc in ifcs]
 
     if !allequal(n_uc_ifc)
-        throw(ArgumentError("You passed ifcs_old built from different size unitcells $(n_uc_ifc)."))
+        throw(ArgumentError("You passed ifcs built from different size unitcells $(n_uc_ifc)."))
     end
     if !all(n_uc .== n_uc_ifc)
         throw(ArgumentError("Your force constants are calcualted on a cell with $(n_uc_ifc) atoms, but you passed a cell with $(n_uc) atoms."))
@@ -118,9 +118,9 @@ function remap(
             # Born effective charges: 3×3 per atom
             born_Z_sc[:, :, a1] .= src.born_Z[:, :, uca]
 
-            # coeff_Z: rows 3*(atom-1)+1:3*atom correspond to that atom
-            r_src = 3 * (uca - 1) + 1 : 3 * uca
-            r_sc  = 3 * (a1 - 1) + 1 : 3 * a1
+            # coeff_Z is stored as (na*9, nx_Z): 9 rows per atom.
+            r_src = 9 * (uca - 1) + 1 : 9 * uca
+            r_sc  = 9 * (a1 - 1) + 1 : 9 * a1
             coeff_Z_sc[r_sc, :] .= src.coeff_Z[r_src, :]
         end
 
@@ -363,7 +363,7 @@ function map_super_to_unitcell(
         end
 
         if !(best_i != 0 && best_d_sq ≤ tol_sq)
-            throw(error("No unit-cell match within tol for supercell atom $j (best_d=$(sqrt(best_d)) Å)"))
+            throw(error("No unit-cell match within tol for supercell atom $j (best_d=$(sqrt(best_d_sq)) Å)"))
         end
         
         s2u[j] = best_i

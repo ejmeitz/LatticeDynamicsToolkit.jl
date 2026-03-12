@@ -34,219 +34,49 @@ function check_hermetian(D, nb; name = "Dynamical matrix")
     end
 end
 
-"""
-    add_nonanalytic_gamma!(D_q, ifc2, uc, q_cart)
-
-Add the non-analytic long-range dipole–dipole correction at Γ (LO–TO splitting)
-to an in-place dynamical matrix `D_q`, using the polar data in `ifc2`.
-
-This mirrors TDEP's `nonanalytical_dynamical_matrix`:
-
-    D_{ij,αβ} = (q ⋅ Z*_{α,i}) (q ⋅ Z*_{β,j}) * 4π / (V * (qᵀ ε q))
-
-where `q = q_cart / ‖q_cart‖`, `Z*` are Born effective charges, and `ε` is the
-high-frequency dielectric tensor. `D_q` is assumed to be *mass-weighted*
-already, so the contribution is scaled by `1/√(m_i m_j)` internally.
-"""
-function add_nonanalytic_gamma!(
-        D_q::AbstractMatrix{ComplexF64},
-        ifc2::IFC2,
-        uc::CrystalStructure,
-        q_cart::SVector{3,Float64},
-    )
-
-    # Require polar data and non-zero direction
-    if !ifc2.has_polar_data
-        return D_q
-    end
-
-    norm_q = sqrt(sqnorm(q_cart))
-    norm_q < lo_sqtol && return D_q
-
-    q = q_cart / norm_q
-
-    na = ifc2.na
-    nb = 3 * na
-
-    eps   = ifc2.polar.eps
-    bornZ = ifc2.polar.born_Z  # shape (3,3,na), matching TDEP: bornZ[α, :, a]
-
-    V = volume(uc)  # bohr^3
-
-    # qᵀ ε q
-    den = dot(q, eps * q)
-    if abs(den) < lo_sqtol
-        return D_q
-    end
-
-    f0 = 4pi / (V * den)
-
-    @inbounds for a1 in 1:na
-        invm1 = uc.invsqrtm[a1]
-        for a2 in 1:na
-            invm2 = uc.invsqrtm[a2]
-            mass_scale = invm1 * invm2
-
-            # Precompute q·Z* for this atom pair
-            zi = ntuple(i -> q[1]*bornZ[i,1,a1] + q[2]*bornZ[i,2,a1] + q[3]*bornZ[i,3,a1], 3)
-            zj = ntuple(j -> q[1]*bornZ[j,1,a2] + q[2]*bornZ[j,2,a2] + q[3]*bornZ[j,3,a2], 3)
-
-            r1 = 3*(a1-1)
-            r2 = 3*(a2-1)
-
-            for i in 1:3, j in 1:3
-                Δ = zi[i] * zj[j] * f0 * mass_scale
-                D_q[r1+i, r2+j] += ComplexF64(Δ, 0.0)
-            end
-        end
-    end
-
-    return D_q
-end
-
-"""
-    add_longrange_ewald!(D_q, fc_uc, uc, q_frac; ewald=nothing, dDdq=nothing)
-
-Add the full Ewald long-range dipole-dipole contribution to the in-place dynamical matrix
-`D_q` at arbitrary q. The matrix is assumed mass-weighted; the long-range block is scaled
-by 1/√(m_i m_j) before adding.
-
-Use this for q ≠ Γ when polar data are present. At Γ, `add_nonanalytic_gamma!` is
-preferred (direction-dependent limit).
-
-- `ewald`: optional precomputed `EwaldParameters` for efficiency when sampling many q.
-- `dDdq`: optional (nb,nb,3) array to accumulate ∂D/∂q_cart for group velocities etc.
-"""
-function add_longrange_ewald!(
-        D_q::AbstractMatrix{ComplexF64},
-        fc_uc::IFC2,
-        uc::CrystalStructure,
-        q_frac::SVector{3,Float64};
-        ewald::Union{Nothing,EwaldParameters}=nothing,
-        dDdq::Union{Nothing,AbstractArray{ComplexF64,3}}=nothing,
-    )
-    fc_uc.has_polar_data || return D_q
-
-    ew = if ewald === nothing
-        precompute_ewald_parameters(fc_uc, uc)
-    else
-        ewald
-    end
-    ew === nothing && return D_q
-
-    na = length(uc)
-    compute_grad = dDdq !== nothing
-    q_gamma = SVector{3,Float64}(0.0, 0.0, 0.0)
-
-    # TDEP parity: include born_onsite_correction in long-range dynamical matrix.
-    D_gamma = longrange_dynamical_matrix(
-        ew, uc, q_gamma, fc_uc.polar.born_Z, fc_uc.polar.eps;
-        reconly=true,
-    )
-    born_onsite = zeros(Float64, 3, 3, na)
-    @inbounds for a1 in 1:na
-        m = zeros(Float64, 3, 3)
-        for a2 in 1:na
-            m .+= real.(D_gamma[:, :, a1, a2])
-        end
-        born_onsite[:, :, a1] .= -m
-    end
-
-    if compute_grad
-        D_lr = zeros(ComplexF64, 3, 3, na, na)
-        Dx_lr = zeros(ComplexF64, 3, 3, na, na)
-        Dy_lr = zeros(ComplexF64, 3, 3, na, na)
-        Dz_lr = zeros(ComplexF64, 3, 3, na, na)
-        longrange_dynamical_matrix_with_gradient!(D_lr, Dx_lr, Dy_lr, Dz_lr,
-            ew, uc, q_frac, fc_uc.polar.born_Z, fc_uc.polar.eps;
-            reconly=true, born_onsite=born_onsite)
-    else
-        D_lr = longrange_dynamical_matrix(
-            ew, uc, q_frac, fc_uc.polar.born_Z, fc_uc.polar.eps;
-            reconly=true, born_onsite=born_onsite
-        )
-    end
-
-    @inbounds for a2 in 1:na, a1 in 1:na
-        w = uc.invsqrtm[a1] * uc.invsqrtm[a2]
-        r1, r2 = 3*(a1-1)+1, 3*(a2-1)+1
-        for j in 1:3, i in 1:3
-            D_q[r1+i-1, r2+j-1] += D_lr[i, j, a1, a2] * w
-            if compute_grad
-                dDdq[r1+i-1, r2+j-1, 1] += Dx_lr[i, j, a1, a2] * w
-                dDdq[r1+i-1, r2+j-1, 2] += Dy_lr[i, j, a1, a2] * w
-                dDdq[r1+i-1, r2+j-1, 3] += Dz_lr[i, j, a1, a2] * w
-            end
-        end
-    end
-
-    return D_q
-end
-
-function _dynmat_gamma_impl(
+function dynmat_gamma(
     fc_sc::IFC2,
     sc::CrystalStructure;
-    include_polar::Bool,
-    uc_polar::Union{Nothing,CrystalStructure},
+    uc::Union{Nothing,CrystalStructure}=nothing,
+    include_polar::Bool=fc_sc.has_polar_data,
 )
-
     na = length(sc)
-    nb = 3*na
+    nb = 3 * na
 
-    @assert na == fc_sc.na "Failed building dynmat. IFCs build on $(fc_sc.na) cell, but supercell has $(na) atoms"
+    @assert na == fc_sc.na "Failed building dynmat. IFCs built on $(fc_sc.na) cell, but supercell has $(na) atoms"
 
     D = zeros(nb, nb)
 
     @inbounds for a1 in 1:na
-        r1 = 3*(a1-1)
+        r1 = 3 * (a1 - 1)
         w1 = sc.invsqrtm[a1]
         for pair in get_interactions(fc_sc, a1)
             a2 = pair.idxs[2]
-            r2 = 3*(a2-1)
-            D[r1+1:r1+3, r2+1:r2+3] .= pair.ifcs .* (w1 * sc.invsqrtm[a2])
+            r2 = 3 * (a2 - 1)
+            D[r1 + 1:r1 + 3, r2 + 1:r2 + 3] .= pair.ifcs .* (w1 * sc.invsqrtm[a2])
         end
     end
 
-    # Add long-range dipole contribution at Γ when polar data present
+    # Add long-range dipole contribution at Γ when polar data are present.
     if include_polar && fc_sc.has_polar_data
-        uc_polar === nothing && error("For TDEP parity, `dynmat_gamma` with polar IFCs requires unit cell `uc`.")
-        ew = precompute_ewald_parameters(fc_sc, uc_polar)
-        Φ_lr = supercell_longrange_forceconstant(ew, fc_sc.polar.born_Z, fc_sc.polar.eps, sc, uc_polar)
+        uc === nothing && error("For TDEP parity, `dynmat_gamma(...; include_polar=true)` requires `uc`.")
+        ew = precompute_ewald_parameters(fc_sc, uc)
+        Φ_lr = supercell_longrange_forceconstant(ew, fc_sc, sc, uc)
         @inbounds for a2 in 1:na, a1 in 1:na
             w = sc.invsqrtm[a1] * sc.invsqrtm[a2]
-            r1, r2 = 3*(a1-1)+1, 3*(a2-1)+1
-            D[r1:r1+2, r2:r2+2] .+= Φ_lr[:, :, a1, a2] .* w
+            r1, r2 = 3 * (a1 - 1) + 1, 3 * (a2 - 1) + 1
+            D[r1:r1 + 2, r2:r2 + 2] .+= Φ_lr[:, :, a1, a2] .* w
         end
     end
 
-    # enforce exact symmetry
+    # Enforce exact symmetry.
     @inbounds for j in 1:nb, i in j+1:nb
-        s = 0.5 * (D[i,j] + D[j,i])
-        D[i,j] = s; D[j,i] = s
+        s = 0.5 * (D[i, j] + D[j, i])
+        D[i, j] = s
+        D[j, i] = s
     end
 
     return Hermitian(D)
-
-end
-
-function dynmat_gamma(
-    fc_sc::IFC2,
-    sc::CrystalStructure;
-    include_polar::Bool=fc_sc.has_polar_data,
-)
-    if include_polar && fc_sc.has_polar_data
-        error("For TDEP parity, call `dynmat_gamma(fc_sc, uc, sc; include_polar=true)` with explicit unit cell.")
-    end
-    return _dynmat_gamma_impl(fc_sc, sc; include_polar=include_polar, uc_polar=nothing)
-end
-
-function dynmat_gamma(
-    fc_sc::IFC2,
-    uc::CrystalStructure,
-    sc::CrystalStructure;
-    include_polar::Bool=fc_sc.has_polar_data,
-)
-    return _dynmat_gamma_impl(fc_sc, sc; include_polar=include_polar, uc_polar=uc)
 end
 
 

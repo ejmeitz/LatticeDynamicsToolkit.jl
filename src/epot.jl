@@ -236,7 +236,7 @@ function _make_energy_dataset(
 
     remap_checks(sc, valid_ifcs...)
 
-    dynmat = dynmat_gamma(ifc2, uc, sc)
+    dynmat = dynmat_gamma(ifc2, sc; uc=uc)
     freqs_sq, phi = get_modes(dynmat, Val{true}())
     freqs = sqrt.(freqs_sq)  # Will error for negative frequencies which I am ok with
 

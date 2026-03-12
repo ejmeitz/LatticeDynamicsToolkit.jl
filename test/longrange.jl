@@ -135,3 +135,62 @@ end
     end
     @test thermo_val ≈ thermo_ref atol=1e-10 rtol=1e-10
 end
+
+@testset "Ewald strategy coverage and supercell polar energy consistency" begin
+    basepath = joinpath(DATA_DIR, "MgO")
+    ucposcar_path = joinpath(basepath, "infile.ucposcar")
+    ifc2_path = joinpath(basepath, "infile.forceconstant")
+
+    ifc2_uc = read_ifc2(ifc2_path, ucposcar_path)
+    uc = CrystalStructure(ucposcar_path)
+    sc = uc
+    ifc2_sc = ifc2_uc
+
+    @test ifc2_uc.has_polar_data
+    @test ifc2_sc.has_polar_data
+
+    ew1 = LatticeDynamicsToolkit.EwaldParameters()
+    ew2 = LatticeDynamicsToolkit.EwaldParameters()
+    ew3 = LatticeDynamicsToolkit.EwaldParameters()
+    # Explicitly exercise strategy=1 and strategy=2 paths (strategy=3 is current production path).
+    LatticeDynamicsToolkit.set_ewald_parameters!(ew1, uc, ifc2_uc.polar.eps; strategy=1)
+    LatticeDynamicsToolkit.set_ewald_parameters!(ew2, uc, ifc2_uc.polar.eps; strategy=2)
+    LatticeDynamicsToolkit.set_ewald_parameters!(ew3, uc, ifc2_uc.polar.eps; strategy=3, lambda_forced=ifc2_uc.polar.lambda)
+
+    q = SVector{3,Float64}(0.5, 0.25, 0.0)
+    D1 = LatticeDynamicsToolkit.longrange_dynamical_matrix(ew1, uc, q, ifc2_uc.polar.born_Z, ifc2_uc.polar.eps; reconly=true)
+    D2 = LatticeDynamicsToolkit.longrange_dynamical_matrix(ew2, uc, q, ifc2_uc.polar.born_Z, ifc2_uc.polar.eps; reconly=true)
+    D3 = LatticeDynamicsToolkit.longrange_dynamical_matrix(ew3, uc, q, ifc2_uc.polar.born_Z, ifc2_uc.polar.eps; reconly=true)
+
+    # Ewald splitting parameter changes decomposition cost, but physical D(q) should be consistent.
+    @test D1 ≈ D3 atol=1e-7 rtol=1e-6
+    @test D2 ≈ D3 atol=1e-7 rtol=1e-6
+
+    Φlr1 = LatticeDynamicsToolkit.supercell_longrange_forceconstant(ew1, ifc2_uc.polar.born_Z, ifc2_uc.polar.eps, sc, uc)
+    Φlr2 = LatticeDynamicsToolkit.supercell_longrange_forceconstant(ew2, ifc2_uc.polar.born_Z, ifc2_uc.polar.eps, sc, uc)
+    Φlr3 = LatticeDynamicsToolkit.supercell_longrange_forceconstant(ew3, ifc2_uc.polar.born_Z, ifc2_uc.polar.eps, sc, uc)
+
+    Random.seed!(42)
+    u = [SVector{3,Float64}(1e-3 * randn(), 1e-3 * randn(), 1e-3 * randn()) for _ in 1:length(sc)]
+
+    function ep_from_forceconstants(uvec::Vector{SVector{3,Float64}}, fcp::Array{Float64,4})
+        acc = 0.0
+        na = length(uvec)
+        @inbounds for a1 in 1:na, a2 in 1:na
+            acc += dot(uvec[a1], fcp[:, :, a1, a2] * uvec[a2])
+        end
+        return 0.5 * acc
+    end
+
+    ep1 = ep_from_forceconstants(u, Φlr1)
+    ep2 = ep_from_forceconstants(u, Φlr2)
+    ep3 = ep_from_forceconstants(u, Φlr3)
+
+    dense = DensePolarIFCs(Φlr3, length(sc))
+    _, _, _, ep_dense = energies(u, ifc2_sc; fcp=dense, n_threads=1)
+
+    # Validate supercell LRFC -> polar energy path used in epot.
+    @test ep_dense ≈ ep3 atol=1e-10 rtol=1e-8
+    @test ep1 ≈ ep3 atol=1e-8 rtol=1e-4
+    @test ep2 ≈ ep3 atol=1e-8 rtol=1e-4
+end

@@ -33,6 +33,7 @@ include("io/tdep_io.jl")
 include("io/hdf5_io.jl")
 
 
+include("ewald.jl")
 include("harmonic/dynmat_longrange.jl")
 include("harmonic/dynmat.jl")
 include("harmonic/thermo.jl")
