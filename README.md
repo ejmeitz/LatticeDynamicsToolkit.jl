@@ -9,8 +9,10 @@ Features:
 - Calculate effective Hamiltonian energies
 - Generate canonical configurations
     - Calculate Hamiltonian energies and/or LAMMPS supported potential on the fly
+- Anharmonic free energy
+- Compute most harmonic properties (DOS, dispersion etc.)
 
 
-Plans:
--------
-- GPU support
+In Progress:
+------------
+- Long range interactions
