@@ -44,6 +44,7 @@ include("anharmonic/free_energy.jl")
 include("distance_table.jl")
 include("remap.jl")
 include("epot.jl")
+include("amorphous_fit/AmorphousFit.jl")
 include("fit_amorphous.jl")
 
 
