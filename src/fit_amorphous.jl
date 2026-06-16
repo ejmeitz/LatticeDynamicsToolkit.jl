@@ -13,7 +13,7 @@ function build_upper_neighbor_list(crystal::CrystalStructure, r_cut::Float64)
     na = length(crystal)
     
     # CellListMap returns pairs (i, j, dist) - order is NOT guaranteed
-    nl_pairs = CellListMap.neighborlist(crystal.x_cart, r_cut; unitcell = crystal.L)
+    nl_pairs = CellListMap.neighborlist(positions = crystal.x_cart, cutoff = r_cut, unitcell = crystal.L)
     
     # Convert to adjacency list format, ensuring we store with smaller index first
     neighbors = [Int[] for _ in 1:na]
