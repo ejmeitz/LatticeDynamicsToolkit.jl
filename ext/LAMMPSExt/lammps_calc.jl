@@ -62,7 +62,7 @@ function LatticeDynamicsToolkit.LAMMPSCalculator(
     # in crystals atoms should never move more than this distance
     # so we the initial neighbor list will always be valid.
     r_cut = (min(xhi, yhi, zhi) / 2.0) - lo_tol # biggest possible cutoff given cell
-    nl = CellListMap.neighborlist(sys.x_cart, r_cut * A_to_bohr; unitcell = sys.L)
+    nl = CellListMap.neighborlist(positions = sys.x_cart, cutoff = r_cut * A_to_bohr, unitcell = sys.L)
     skin_distance = bohr_to_A * minimum(x -> last(x), nl)
 
     setup_cmd = """
