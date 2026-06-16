@@ -14,7 +14,7 @@ function make_distance_table(
     )
 
     # Returns List of (idx1, idx2, dist) cannot assume ordering
-    nl_oneway = CellListMap.neighborlist(crys.x_cart, r_cut; unitcell = crys.L)
+    nl_oneway = CellListMap.neighborlist(positions=crys.x_cart, cutoff=r_cut, unitcell = crys.L)
     nl = make_nl_bidirectional(nl_oneway, length(crys))
 
     dtas = Vector{DistanceTableAtom}(undef, length(crys))
