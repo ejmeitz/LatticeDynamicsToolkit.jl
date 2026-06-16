@@ -1,7 +1,7 @@
 name = "LatticeDynamicsToolkit"
 uuid = "b29279a7-2984-401e-b335-37c7be833a5d"
 authors = ["Ethan Meitz <emeitz@andrew.cmu.edu>"]
-version = "0.0.2"
+version = "0.1.1"
 
 [deps]
 AtomsBase = "a963bdd2-2df7-4f54-a1ee-49d51e6be12a"
