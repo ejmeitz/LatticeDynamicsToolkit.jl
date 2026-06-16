@@ -1,7 +1,7 @@
 name = "LatticeDynamicsToolkit"
 uuid = "b29279a7-2984-401e-b335-37c7be833a5d"
 authors = ["Ethan Meitz <emeitz@andrew.cmu.edu>"]
-version = "0.0.1"
+version = "0.0.2"
 
 [deps]
 AtomsBase = "a963bdd2-2df7-4f54-a1ee-49d51e6be12a"
@@ -31,6 +31,7 @@ LAMMPSExt = "LAMMPS"
 [compat]
 AtomsBase = "0.5.2"
 AtomsCalculators = "0.2.3"
+CellListMap = "0.10"
 HDF5 = "0.17.2"
 KrylovKit = "0.10.2"
 LAMMPS = "0.10"
