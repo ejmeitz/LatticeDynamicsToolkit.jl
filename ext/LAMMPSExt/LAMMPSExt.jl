@@ -3,7 +3,7 @@ module LAMMPSExt
 using LAMMPS
 using TDEPWrapper
 using LatticeDynamicsToolkit
-import LatticeDynamicsToolkit: bohr_to_A, A_to_bohr, Hartree_to_eV, emu_to_amu, lo_tol, forceconstant_2nd_HartreeBohr_to_eVA
+import LatticeDynamicsToolkit: bohr_to_A, A_to_bohr, Hartree_to_eV, kB_Hartree, emu_to_amu, lo_tol, forceconstant_2nd_HartreeBohr_to_eVA, F_harmonic_single
 using AtomsBase
 using AtomsCalculators
 using LinearAlgebra

@@ -15,7 +15,10 @@
     )
 
 Calculates force constants self-consistently by sampling configurations from the canonical ensemble,
-fitting force constants and iterating until convergence. 
+fitting force constants and iterating until convergence. The harmonic free energy, dispersion and DOS
+are computed for each iteration and can be used to asses convergence. If `rc3` and `rc4` are provided,
+third and fourth order force constants are fitted and used to compute the harmonic free energy. `rc3` 
+can be provided without `rc4`. Results are moved to the `basedir` directory.
 
 This function is written to take in any `CrystalStructure` from the LatticeDynamicsToolkit interface and any force calculator
 from the LAMMPSCalculator interface.
@@ -31,6 +34,9 @@ from the LAMMPSCalculator interface.
 - `temperature` : Temperature to generate configurations at
 - `maximum_frequency` : Estimate of maximum freuqency in THz to generate initial configurations from
 - `quantum::Bool = false` : Generate configurations from the quantum canonical ensemble
+- `F_H_mesh::Vector{Int} = [30, 30, 30]` : Mesh used to compute the harmonic free energy
+- `rc3::Union{Float64, Nothing} = nothing` : Cutoff used to fit third-order IFCs on the last iteration (Angstrom)
+- `rc4::Union{Float64, Nothing} = nothing` : Cutoff used to fit fourth-order IFCs on the last iteration (Angstrom)
 - `ncores::Integer = Threads.nthreads()` : Number of cores used by IFC calculation
 - `verbose::Bool = false` : Enable extra printing
 """
@@ -46,13 +52,14 @@ function LatticeDynamicsToolkit.sTDEP(
     nconf_init::Int = 8,
     max_configs::Int = 512,
     quantum::Bool = false,
+    F_H_mesh = [30, 30, 30],
+    rc3::Union{Float64, Nothing} = nothing,
+    rc4::Union{Float64, Nothing} = nothing,
     ncores::Integer = Threads.nthreads(),
-    verbose::Bool = false
+    verbose::Bool = false,
 )
 
-
     @assert isfile(joinpath(basedir, "infile.ucposcar")) "sTDEP requires an infile.ucposcar in $(basedir)"
-
 
     nconf = []
     for i in 1:niter
@@ -93,7 +100,18 @@ function LatticeDynamicsToolkit.sTDEP(
 
     generate_configs(sys, cc_init, calc, init_dir, verbose)
 
+    F_Hs = zeros(Float64, niter)
+    F_Hs[1] = compute_harmonic_free_energy(
+        F_H_mesh,
+        init_dir,
+        temperature,
+        ncores,
+        quantum;
+        ifc_name = "outfile.fakeforceconstant"
+    )
+
     # Generate remaining configurations with IFCs from prior iteration
+    p = Progress(niter - 1, desc = "sTDEP IFCs")
     for i in 1:(niter - 1)
 
         cc = CanonicalConfiguration(
@@ -112,7 +130,84 @@ function LatticeDynamicsToolkit.sTDEP(
         execute(efc, outdir, ncores, verbose)
         # Generate DOS and Dispersion Data
         execute(pd, outdir, ncores, verbose)
+        # Compute Harmonic Free Energy
+        F_Hs[i+1] = compute_harmonic_free_energy(F_H_mesh, outdir, temperature, ncores, quantum)
+        next!(p)
     end
+    finish!(p)
+
+    final_iter_dir = get_path(niter - 1)
+
+    if rc4 !== nothing && rc3 === nothing
+        rc3 = rc4
+        @warn "rc4 provided but not rc3, using rc3 = rc4"
+    end
+
+    # Fit Higher-Order IFCs
+    efc =
+    if rc3 !== nothing && rc4 === nothing
+        ExtractForceConstants(
+            secondorder_cutoff = rc2,
+            thirdorder_cutoff = rc3,
+        )
+    elseif rc4 !== nothing
+        ExtractForceConstants(
+            secondorder_cutoff = rc2,
+            thirdorder_cutoff = rc3,
+            fourthorder_cutoff = rc4,
+        )
+    else
+        nothing
+    end
+
+    if efc !== nothing
+        t0 = time_ns()
+        execute(efc, final_iter_dir, ncores, verbose)
+        dt = (time_ns() - t0) / 1e9
+        verbose && @info "3rd/4th order IFCs took $(dt) seconds"
+    end
+
+    open(joinpath(basedir, "harmonic_free_energy.txt"), "w") do f
+        println(f, "# Iteration - F_Harmonic [eV / atom] at T = $(temperature) K")
+        for i in 1:niter
+            @printf f "%d %.15f\n" i F_Hs[i]*Hartree_to_eV
+        end
+    end
+
+    # Move results to basedir
+    cp(joinpath(final_iter_dir, "outfile.forceconstant"), joinpath(basedir, "infile.forceconstant"))
+    rc3 !== nothing && cp(joinpath(final_iter_dir, "outfile.forceconstant_thirdorder"), joinpath(basedir, "infile.forceconstant_thirdorder"))
+    rc4 !== nothing && cp(joinpath(final_iter_dir, "outfile.forceconstant_fourthorder"), joinpath(basedir, "infile.forceconstant_fourthorder"))
+
+    return nothing
+end
+
+function compute_harmonic_free_energy(
+    F_H_mesh::Vector{Int},
+    dir::String,
+    T::Float64,
+    ncores::Integer,
+    quantum::Bool;
+    ifc_name::String = "outfile.forceconstant"
+)
+
+    L = quantum ? Quantum : Classical
+    uc = CrystalStructure(joinpath(dir, "infile.ucposcar"))
+    ibz = SimpleMesh(uc, F_H_mesh)
+    ifc2 = read_ifc2(
+        joinpath(dir, ifc_name),
+        joinpath(dir, "infile.ucposcar")
+    )
+    
+    F0 = LatticeDynamicsToolkit.sum_over_freqs(
+        (ω) -> F_harmonic_single(ω, kB_Hartree*T, L), 
+        ibz,
+        uc,
+        ifc2;
+        n_threads = ncores
+    )
+
+    return F0 / ibz.n_atoms_prim
 
 end
 
@@ -146,7 +241,6 @@ function generate_configs(
     n_atoms = length(sys)
     cell_ang = sys.L .* bohr_to_A
 
-    @info "Generating Configurations"
     execute(cc, outdir, 1, verbose)
 
     get_filepath = (i) -> joinpath(outdir, "contcar_conf$(lpad(i, 4, '0'))")
@@ -155,7 +249,6 @@ function generate_configs(
     f_zeros_buf = zeros(Float64, 3, n_atoms)
 
     # Parse coordinates into sys object and calculate forces
-    p = Progress(cc.nconf, desc = "Calculating Forces")
     for i in 1:cc.nconf
         filepath = get_filepath(i)
         x_cart, _ = TDEPWrapper.read_poscar_positions(filepath, n_atoms = n_atoms)
@@ -185,10 +278,7 @@ function generate_configs(
             [cc.temperature];
             file_mode = "a"
         )
-
-        next!(p)
     end
-    finish!(p)
 
     # Write infile.meta
     write_meta(outdir, ustrip.(cc.temperature), cc.nconf + nconf_extra, 1.0, n_atoms)
