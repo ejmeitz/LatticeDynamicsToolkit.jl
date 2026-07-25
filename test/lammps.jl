@@ -16,17 +16,21 @@ if has_lammps()
         pot_cmds = ["pair_style sw", "pair_coeff * * \"$(sw_pot)\" Si"]
         make_calc = sc -> LAMMPSCalculator(sc, pot_cmds)
 
-        tep_energies, V = make_energy_dataset(
+        tep_energies, V, V2_tilde, dV2_tilde_dT = make_energy_dataset(
             settings, uc, sc, make_calc;
             ifc2 = ifc2, ifc3 = ifc3, ifc4 = ifc4,
             verbose = false
         )
 
         # TEP energies are tested elsewhere
-        # This is not testing correctness...fix that
+        # This is not testing correctness... fix that
         @test length(V) == n_configs
         @test all(isfinite, V)
-        
+        @test length(V2_tilde) == n_configs
+        @test length(dV2_tilde_dT) == n_configs
+        @test all(isfinite, V2_tilde)
+        @test all(iszero, dV2_tilde_dT)  # classical: ∂Ṽ₂/∂T ≡ 0
+
     end
 
     # @testset "TI SW (LAMMPS)" begin
