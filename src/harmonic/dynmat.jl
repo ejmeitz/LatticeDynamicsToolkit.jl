@@ -2,11 +2,25 @@ export
     dynmat_gamma,
     get_modes,
     dynmat_q,
-    dynmat_q!
+    dynmat_q!,
+    dynmat_and_derivative_q,
+    dynmat_and_derivative_q!
 
 #! probably some speed to be gained by using SMatrix for dynmats
 
 q_cart_from_frac(cell::CrystalStructure, q_frac::SVector{3,Float64}) = 2pi .* (cell.L_inv' * q_frac)
+
+function precompute_ewald_parameters(ifc2::IFC2, uc::CrystalStructure)
+    if !ifc2.has_polar_data
+        return nothing
+    end
+
+    ew = EwaldParameters()
+    λ = ifc2.polar.lambda
+    λ > 0 || throw(ArgumentError("For TDEP parity, IFC2 polar lambda must be > 0; got λ=$(λ)."))
+    set_ewald_parameters!(ew, uc, ifc2.polar.eps; strategy=3, lambda_forced=λ)
+    return ew
+end
 
 function check_hermetian(D, nb; name = "Dynamical matrix")
     c0 = 0.0
@@ -20,33 +34,49 @@ function check_hermetian(D, nb; name = "Dynamical matrix")
     end
 end
 
-function dynmat_gamma(fc_sc::IFC2, sc::CrystalStructure)
-
+function dynmat_gamma(
+    fc_sc::IFC2,
+    sc::CrystalStructure;
+    uc::Union{Nothing,CrystalStructure}=nothing,
+    include_polar::Bool=fc_sc.has_polar_data,
+)
     na = length(sc)
-    nb = 3*na
+    nb = 3 * na
 
-    @assert na == fc_sc.na "Failed building dynmat. IFCs build on $(fc_sc.na) cell, but supercell has $(na) atoms"
+    @assert na == fc_sc.na "Failed building dynmat. IFCs built on $(fc_sc.na) cell, but supercell has $(na) atoms"
 
     D = zeros(nb, nb)
 
     @inbounds for a1 in 1:na
-        r1 = 3*(a1-1)
+        r1 = 3 * (a1 - 1)
         w1 = sc.invsqrtm[a1]
         for pair in get_interactions(fc_sc, a1)
             a2 = pair.idxs[2]
-            r2 = 3*(a2-1)
-            D[r1+1:r1+3, r2+1:r2+3] .= pair.ifcs .* (w1 * sc.invsqrtm[a2])  
+            r2 = 3 * (a2 - 1)
+            D[r1 + 1:r1 + 3, r2 + 1:r2 + 3] .= pair.ifcs .* (w1 * sc.invsqrtm[a2])
         end
     end
 
-    # enforce exact symmetry
+    # Add long-range dipole contribution at Γ when polar data are present.
+    if include_polar && fc_sc.has_polar_data
+        uc === nothing && error("For TDEP parity, `dynmat_gamma(...; include_polar=true)` requires `uc`.")
+        ew = precompute_ewald_parameters(fc_sc, uc)
+        Φ_lr = supercell_longrange_forceconstant(ew, fc_sc, sc, uc)
+        @inbounds for a2 in 1:na, a1 in 1:na
+            w = sc.invsqrtm[a1] * sc.invsqrtm[a2]
+            r1, r2 = 3 * (a1 - 1) + 1, 3 * (a2 - 1) + 1
+            D[r1:r1 + 2, r2:r2 + 2] .+= Φ_lr[:, :, a1, a2] .* w
+        end
+    end
+
+    # Enforce exact symmetry.
     @inbounds for j in 1:nb, i in j+1:nb
-        s = 0.5 * (D[i,j] + D[j,i])
-        D[i,j] = s; D[j,i] = s
+        s = 0.5 * (D[i, j] + D[j, i])
+        D[i, j] = s
+        D[j, i] = s
     end
 
     return Hermitian(D)
-
 end
 
 
@@ -96,13 +126,16 @@ function dynmat_q(
         fc_uc::IFC2,
         uc::CrystalStructure,
         q_frac::SVector{3,Float64};
+        include_polar::Bool = fc_uc.has_polar_data,
+        qdir_gamma::SVector{3,Float64} = SVector{3,Float64}(1.0, 0.0, 0.0),
+        ewald::Union{Nothing,EwaldParameters}=nothing,
     )
 
     na = length(uc)
     nb = 3*na
     D_q = zeros(ComplexF64, nb, nb)
 
-    return dynmat_q!(D_q, fc_uc, uc, q_frac)
+    return dynmat_q!(D_q, fc_uc, uc, q_frac; include_polar=include_polar, qdir_gamma=qdir_gamma, ewald=ewald)
 end
 
 function dynmat_q!(
@@ -110,6 +143,9 @@ function dynmat_q!(
         fc_uc::IFC2,
         uc::CrystalStructure,
         q_frac::SVector{3,Float64};
+        include_polar::Bool = fc_uc.has_polar_data,
+        qdir_gamma::SVector{3,Float64} = SVector{3,Float64}(1.0, 0.0, 0.0),
+        ewald::Union{Nothing,EwaldParameters}=nothing,
     )
 
     na = length(uc)
@@ -130,7 +166,16 @@ function dynmat_q!(
             D_q[r1:r1+2, r2:r2+2] .+= fc.ifcs .* (phase * (inv_m_a1 * uc.invsqrtm[a2]))
         end
     end
-    
+
+    # Polar long-range correction
+    if include_polar && fc_uc.has_polar_data
+        if is_gamma(q_frac)
+            add_nonanalytic_gamma!(D_q, fc_uc, uc, q_cart_from_frac(uc, qdir_gamma))
+        else
+            add_longrange_ewald!(D_q, fc_uc, uc, q_frac; ewald=ewald)
+        end
+    end
+
     check_hermetian(D_q, nb)
 
     return D_q
@@ -140,6 +185,9 @@ function dynmat_and_derivative_q(
         fc_uc::IFC2,
         uc::CrystalStructure,
         q_frac::SVector{3,Float64};
+        include_polar::Bool = fc_uc.has_polar_data,
+        qdir_gamma::SVector{3,Float64} = SVector{3,Float64}(1.0, 0.0, 0.0),
+        ewald::Union{Nothing,EwaldParameters}=nothing,
     )
 
     na = length(uc)
@@ -148,7 +196,7 @@ function dynmat_and_derivative_q(
     D_q = zeros(ComplexF64, nb, nb)
     ∂D∂q = zeros(ComplexF64, nb, nb, 3)
 
-    return dynmat_and_derivative_q!(D_q, ∂D∂q, fc_uc, uc, q_frac)
+    return dynmat_and_derivative_q!(D_q, ∂D∂q, fc_uc, uc, q_frac; include_polar=include_polar, qdir_gamma=qdir_gamma, ewald=ewald)
 end
 
 function dynmat_and_derivative_q!(
@@ -157,6 +205,9 @@ function dynmat_and_derivative_q!(
         fc_uc::IFC2,
         uc::CrystalStructure,
         q_frac::SVector{3,Float64};
+        include_polar::Bool = fc_uc.has_polar_data,
+        qdir_gamma::SVector{3,Float64} = SVector{3,Float64}(1.0, 0.0, 0.0),
+        ewald::Union{Nothing,EwaldParameters}=nothing,
     )
 
     na = length(uc)
@@ -181,7 +232,16 @@ function dynmat_and_derivative_q!(
             ∂D∂q[r1:r1+2, r2:r2+2, 3] .+= (im * fc.lvs[2][3]) .* block
         end
     end
-    
+
+    # Polar long-range correction
+    if include_polar && fc_uc.has_polar_data
+        if is_gamma(q_frac)
+            add_nonanalytic_gamma!(D_q, fc_uc, uc, q_cart_from_frac(uc, qdir_gamma))
+        else
+            add_longrange_ewald!(D_q, fc_uc, uc, q_frac; ewald=ewald, dDdq=∂D∂q)
+        end
+    end
+
     check_hermetian(D_q, nb)
     @views check_hermetian(∂D∂q[:,:,1], nb; name = "∂D∂q_x")
     @views check_hermetian(∂D∂q[:,:,2], nb; name = "∂D∂q_y")

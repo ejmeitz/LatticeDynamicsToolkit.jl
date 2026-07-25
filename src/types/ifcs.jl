@@ -1,6 +1,7 @@
 export 
     IFC2, IFC3, IFC4,
-    AmorphousIFC2, DenseIFC2
+    AmorphousIFC2, DenseIFC2,
+    DensePolarIFCs
 
 abstract type IFCs end
 abstract type AmorphousIFCs <: IFCs end
@@ -39,12 +40,61 @@ struct FC4Data
     ifcs::SArray{Tuple{3,3,3,3}, Float64, 4, 81}
 end
 
+struct PolarIFC2
+    correction_type::Int                 # TDEP fc%loto%correctiontype
+    eps::SMatrix{3,3,Float64,9}          # high-frequency dielectric tensor
+    lambda::Float64                      # Ewald coupling parameter
+    nx_Z::Int                            # number of irreducible Born-charge components
+    x_Z::Vector{Float64}                 # irrep of Born charges
+    coeff_Z::Matrix{Float64}             # (na*9, nx_Z) coefficients to reconstruct Born charges
+    born_Z::Array{Float64,3}             # (3,3,na) Born effective charges
+end
+
+# Convenience constructor for an \"empty\" (non-polar) container of the right size.
+PolarIFC2(na::Int) = PolarIFC2(
+    0,                                    # correction_type
+    SMatrix{3,3,Float64,9}(I),            # eps (identity by default)
+    0.0,                                  # lambda
+    0,                                    # nx_Z
+    Float64[],                            # x_Z
+    zeros(Float64, 0, 0),                 # coeff_Z
+    zeros(Float64, 3, 3, na),             # born_Z
+)
+
 struct IFC2 <: IFCs
     na::Int # number of atoms in the cell
     r_cut::Float64
     # all interactions for each atom in the unitcell, has length na_uc
     # by translational symmetry we can re-build all other IFCs
     atoms::Vector{Vector{FC2Data}}
+    has_polar_data::Bool
+    polar::PolarIFC2
+end
+
+
+"""
+    DensePolarIFCs
+
+Dense long-range polar force constants precomputed for a specific supercell.
+Store this once and reuse in repeated `energies` calls to avoid rebuilding
+Ewald-derived data on the hot path.
+"""
+struct DensePolarIFCs
+    fcp::Array{Float64,4}  # (3, 3, na, na)
+    na::Int
+end
+
+function DensePolarIFCs(fc2::IFC2, uc::CrystalStructure, sc::CrystalStructure)
+    fc2.has_polar_data || throw(ArgumentError("DensePolarIFCs(fc2, uc, sc) requires IFC2 with polar data"))
+    fc2.na == length(sc) || throw(ArgumentError(
+        "DensePolarIFCs expects IFC2 remapped to the target supercell: fc2.na=$(fc2.na), length(sc)=$(length(sc)). " *
+        "Try `remap(sc, uc, ifc2)` first."
+    ))
+    ew = EwaldParameters()
+    fc2.polar.lambda > 0 || throw(ArgumentError("IFC2 polar lambda must be > 0; got λ=$(λ)."))
+    set_ewald_parameters!(ew, uc, fc2.polar.eps; strategy=3, lambda_forced=fc2.polar.lambda)
+    fcp = supercell_longrange_forceconstant(ew, fc2, sc, uc)
+    return DensePolarIFCs(fcp, length(sc))
 end
 
 struct IFC3 <: IFCs

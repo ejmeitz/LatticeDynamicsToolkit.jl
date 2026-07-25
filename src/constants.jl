@@ -1,5 +1,9 @@
 const periodic_table = PeriodicTable.elements
 
+const TWOPI = 2.0 * Float64(π)
+const FOUR_OVER_THREE_SQRTPI = 4.0 / (3.0 * sqrt(Float64(π)))  # ≈ 0.75225
+const TWO_OVER_SQRTPI = 2.0 / sqrt(Float64(π))  # ≈ 1.12838
+
 const lo_tol = 1e-5
 const lo_sqtol = lo_tol^2
 const lo_freqtol = lo_tol*1e-4

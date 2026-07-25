@@ -169,6 +169,7 @@ function sum_over_freqs(
     )
 
     @assert length(uc) == ifc2.na "Failed summing over freqs. IFCs build on $(ifc2.na) cell, but unitcell has $(length(uc)) atoms"
+    ewald = precompute_ewald_parameters(ifc2, uc)
 
     res = @tasks for i in eachindex(ibz.weights)
 
@@ -180,7 +181,7 @@ function sum_over_freqs(
             reducer=+
         end
 
-        D_q = dynmat_q(ifc2, uc, q)
+        D_q = dynmat_q(ifc2, uc, q; ewald=ewald)
         freqs_sq, _ = get_modes(D_q, Val{is_gamma(q)}())
         freqs_sq_real = clean_eigenvalue.(freqs_sq)
         freqs = negsqrt.(freqs_sq_real)
@@ -228,6 +229,7 @@ function sum_over_freqs_dense(
 ) where {F}
 
     @assert length(uc) == ifc2.na "IFCs built on $(ifc2.na) atom cell, but unitcell has $(length(uc)) atoms"
+    ewald = precompute_ewald_parameters(ifc2, uc)
 
     Nk = prod(mesh)
 
@@ -252,7 +254,7 @@ function sum_over_freqs_dense(
 
         q = q_from_linidx(lin)
 
-        D_q = dynmat_q(ifc2, uc, q)
+        D_q = dynmat_q(ifc2, uc, q; ewald=ewald)
         freqs_sq, _ = get_modes(D_q, Val{is_gamma(q)}())
         # Guard against tiny negative roundoff before sqrt
         freqs = sqrt.(max.(freqs_sq, 0.0))

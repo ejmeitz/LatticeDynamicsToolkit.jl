@@ -40,6 +40,7 @@ function energies(
         fc2::IFC2;
         fc3::Union{Nothing,IFC3}=nothing,
         fc4::Union{Nothing,IFC4}=nothing,
+        fcp::Union{Nothing,DensePolarIFCs}=nothing,
         n_threads::Integer = Threads.nthreads()
     )
 
@@ -51,7 +52,10 @@ function energies(
         throw(ArgumentError("Displacements have $(na) atoms, but passed IFCs are built from different size cell. IFCs should be remapped to the supercell."))
     end
 
-    e2, e3, e4 = @tasks for a1 in 1:na
+    has_fcp = fcp !== nothing
+    fcp_mat = has_fcp ? fcp.fcp : nothing
+
+    e2, e3, e4, ep = @tasks for a1 in 1:na
 
         @set begin
             ntasks  = n_threads
@@ -64,6 +68,7 @@ function energies(
         e2_local = 0.0
         e3_local = 0.0
         e4_local = 0.0
+        ep_local = 0.0
         
         v0 .= 0.0
         for pair in get_interactions(fc2, a1)
@@ -72,17 +77,25 @@ function energies(
         end
         e2_local += dot(u[a1], v0)
 
-        # # Cubic term
+        # Polar long-range term
+        if has_fcp
+            v0 .= 0.0
+            for a2 in 1:na
+                @inbounds for j in 1:3
+                    v0[1] += fcp_mat[1, j, a1, a2] * u[a2][j]
+                    v0[2] += fcp_mat[2, j, a1, a2] * u[a2][j]
+                    v0[3] += fcp_mat[3, j, a1, a2] * u[a2][j]
+                end
+            end
+            ep_local += dot(u[a1], v0)
+        end
+
+        # Cubic term
         if fc3 !== nothing
             v0 .= 0.0
             for trip in get_interactions(fc3, a1)
                 a2 = trip.idxs[2]; u2 = u[a2]
                 a3 = trip.idxs[3]; u3 = u[a3]
-
-                # einsum notation: V[i] = M[i, j, k] * u2[j] * u3[k]
-                # for i1 in 1:3, i2 in 1:3, i3 in 1:3
-                #     v0[i1] += trip.ifcs[i1,i2,i3] * u2[i2] * u3[i3]
-                # end
 
                 contract33!(v0, trip.ifcs, u2, u3)
 
@@ -90,7 +103,7 @@ function energies(
             e3_local += dot(v0, u[a1])
         end
 
-        # # quartic term
+        # Quartic term
         if fc4 !== nothing
             v0 .= 0.0
             for quat in get_interactions(fc4, a1) # each quat is SVector{N, FC4Data{T}}
@@ -98,25 +111,20 @@ function energies(
                 a3 = quat.idxs[3]; u3 = u[a3]
                 a4 = quat.idxs[4]; u4 = u[a4]
 
-                #einsum notation: V[i] = M[i, j, k, l] * u2[j] * u3[k] * u4[l]
-                # for i1 in 1:3, i2 in 1:3, i3 in 1:3, i4 in 1:3
-                #     v0[i1] += quat.ifcs[i1,i2,i3,i4] * u2[i2] * u3[i3] * u4[i4]
-                # end
-
                 contract44!(v0, quat.ifcs, u2, u3, u4)
-
             end
             e4_local += dot(v0, u[a1])
         end
 
-        (e2_local, e3_local, e4_local)
+        (e2_local, e3_local, e4_local, ep_local)
     end
 
     e2 *= 0.5
     e3 /= 6.0
     e4 /= 24.0
+    ep *= 0.5
 
-    return e2, e3, e4
+    return e2, e3, e4, ep
 end
 
 function energies(
@@ -124,6 +132,7 @@ function energies(
     fc2::AmorphousIFC2;
     fc3::Nothing = nothing,
     fc4::Nothing = nothing,
+    fcp::Nothing = nothing,
     n_threads::Integer = Threads.nthreads()
 )
     na = length(u)
@@ -166,7 +175,7 @@ function energies(
     
     e2 *= 0.5
     
-    return e2, 0.0, 0.0
+    return e2, 0.0, 0.0, 0.0
 end
 
 
@@ -179,7 +188,8 @@ function make_energy_dataset(
         ifc2::Union{IFC2, AmorphousIFC2}, # required, but pass as kwarg
         ifc3::Union{Nothing, IFC3} = nothing,
         ifc4::Union{Nothing, IFC4} = nothing,
-        n_threads::Integer = Threads.nthreads()
+        n_threads::Integer = Threads.nthreads(),
+        verbose::Bool = true
     )
 
     valid_ifcs = Iterators.filter(!isnothing, (ifc2, ifc3, ifc4))
@@ -188,36 +198,58 @@ function make_energy_dataset(
         error(ArgumentError("Does not make sense to use AmorphousIFC2 with higher order IFCs to build energy dataset"))
     end
     
-    @info "Remapping IFCs to Supercell"
+    verbose && @info "Remapping IFCs to Supercell"
     valid_ifcs_remapped = remap(sc, uc, valid_ifcs...)
     valid_ifcs_remapped_kwargs = build_kwargs(valid_ifcs_remapped...)
-    
-    return _make_energy_dataset_no_V(cc_settings, sc; valid_ifcs_remapped_kwargs...,
-                                         n_threads = n_threads)
+
+    # Build dense long-range polar data once (TDEP fcp equivalent)
+    fcp = nothing
+    if isa(ifc2, IFC2) && valid_ifcs_remapped_kwargs.ifc2.has_polar_data
+        fcp = DensePolarIFCs(valid_ifcs_remapped_kwargs.ifc2, uc, sc)
+        verbose && @info "Built dense polar IFCs" na=fcp.na lambda=valid_ifcs_remapped_kwargs.ifc2.polar.lambda
+    end
+
+    return _make_energy_dataset(
+            cc_settings,
+            uc,
+            sc;
+            valid_ifcs_remapped_kwargs...,
+            fcp = fcp,
+            n_threads = n_threads,
+            verbose = verbose
+        )
 end
 
 # Assumes IFCs are supercell already
 function _make_energy_dataset(
     cc_settings::ConfigSettings,
+    uc::CrystalStructure,
     sc::CrystalStructure;
     ifc2::Union{IFC2, AmorphousIFC2},
     ifc3::Union{Nothing, IFC3} = nothing,
     ifc4::Union{Nothing, IFC4} = nothing,
-    n_threads::Integer = Threads.nthreads()
+    fcp::Union{Nothing,DensePolarIFCs} = nothing,
+    n_threads::Integer = Threads.nthreads(),
+    verbose::Bool = true
 )
     valid_ifcs = Iterators.filter(!isnothing, (ifc2, ifc3, ifc4))
 
     remap_checks(sc, valid_ifcs...)
 
-    dynmat = dynmat_gamma(ifc2, sc)
+    dynmat = dynmat_gamma(ifc2, sc; uc=uc)
     freqs_sq, phi = get_modes(dynmat, Val{true}())
     freqs = sqrt.(freqs_sq)  # Will error for negative frequencies which I am ok with
 
-    tep_energies = zeros(SVector{3, Float64}, cc_settings.n_configs)
+    tep_energies = zeros(SVector{4, Float64}, cc_settings.n_configs)
 
-    f = (config) -> energies(config, ifc2; fc3=ifc3, fc4=ifc4, n_threads=1)
+    # Harmonic part for TEP is e2 + ep (short-range + polar); ep is 0 when fcp is nothing
+    verbose && @info "Preparing energy evaluations" has_polar_term=(fcp !== nothing) n_configs=cc_settings.n_configs
+    f = (config) -> begin
+        e2, e3, e4, ep = energies(config, ifc2; fc3=ifc3, fc4=ifc4, fcp=fcp, n_threads=1)
+        return SVector{4,Float64}(e2, e3, e4, ep)
+    end
 
-    @info "Building Energy Dataset"
+    verbose && @info "Building Energy Dataset"
     canonical_configs!(
         tep_energies,
         f,
@@ -225,7 +257,8 @@ function _make_energy_dataset(
         freqs,
         phi,
         sc.m;
-        n_threads = n_threads
+        n_threads = n_threads,
+        verbose = verbose
     )
 
     return Hartree_to_eV .* tep_energies

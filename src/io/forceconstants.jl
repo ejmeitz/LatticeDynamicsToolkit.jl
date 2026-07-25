@@ -1,20 +1,19 @@
-export read_ifc2, read_ifc3, read_ifc4,
-       write_ifc2, read_ifc2_matrix,
-       read_positions, read_forces
+# TDEP text format force constant reading (outfile.forceconstant, etc.)
 
+export read_ifc2, read_ifc3, read_ifc4
 
 """
     read_ifc2(ifc2_path, ucposcar_path)
-    read_ifc2(path, r_frac_uc, L_uc) -> IFCs{2, T}
+    read_ifc2(path, r_frac_uc, L_uc) -> IFC2
 
-Read a 2nd-order outfile.forceconstant from TDEP. This follows the logic implemented in TDEP.
-Does NOT handle polar force constants.
+Read a 2nd-order `outfile.forceconstant` from TDEP. This follows the logic
+implemented in TDEP, including the optional polar (Born-charge / dielectric)
+block at the end of the file.
 
 Inputs
 - `path::AbstractString`: file path
 - `r_frac_uc::AbstractVector{SVector{3,T}}`: 3×na fractional coords of atoms in the unitcell
 - `L_uc::AbstractMatrix{T}`: 3×3 lattice (columns are lattice vectors), Cartesian = A * fractional
-
 """
 function read_ifc2(ifc2_path::AbstractString, ucposcar_path::AbstractString)
     _, x_frac_uc, L_uc = read_poscar_data(ucposcar_path)
@@ -48,14 +47,14 @@ function read_ifc2(
 
         for a1 in 1:na
             n_neighbors = readline_skip_text!(io, Int)
-            pair_data = Vector{FC2Data}(undef, n_neighbors) 
+            pair_data = Vector{FC2Data}(undef, n_neighbors)
             for i in 1:n_neighbors
                 a2 = readline_skip_text!(io, Int) # unitcell index of neighbor
                 lv2_frac = read_svec3!(io, Float64)
                 ifcs = read_mat3_rows!(io, Float64; conv = forceconstant_2nd_eVA_to_HartreeBohr)
 
                 # frac positions of the two atoms in their image cells
-                v1_frac = r_frac_uc[a1] # + lv1_frac 
+                v1_frac = r_frac_uc[a1] # + lv1_frac
                 v2_frac = lv2_frac + SVector{3,Float64}(r_frac_uc[a2])
 
                 # Convert to Cartesian
@@ -80,19 +79,90 @@ function read_ifc2(
                     ifcs
                 )
             end
-            
+
             data[a1] = pair_data
         end
 
-        # technically theres more polar stuff, but ignore that for now
+        # Optional polar block (Born effective charges, dielectric tensor, etc.)
+        #
+        # This mirrors the layout in TDEP's type_forceconstant_secondorder_io:
+        #  - integer flag / correction type
+        #  - 3 lines of dielectric tensor (3 numbers per line + commentary)
+        #  - lambda (Ewald parameter)
+        #  - nx_Z
+        #  - nx_Z lines of x_Z(i)
+        #  - na*9 lines of coeff_Z(i, 1..nx_Z)
+        #  - 3×3 Born effective charge tensor per atom (3 lines, 3 numbers each + commentary)
 
-        IFC2(na, max_rcut + lo_sqtol, data)
+        # If we are at EOF here, treat as a non-polar file.
+        if eof(io)
+            return IFC2(na, max_rcut + lo_sqtol, data, false, PolarIFC2(na))
+        end
+
+        # Read the polar/correction-type flag (0 = non-polar file)
+        polar_flag = readline_skip_text!(io, Int)
+
+        if polar_flag == 0
+            return IFC2(na, max_rcut + lo_sqtol, data, false, PolarIFC2(na))
+        end
+
+        # Dielectric tensor eps: three lines with three floats each followed by comments.
+        function _read_first3_svec3!(io)
+            xs = split(strip(readline(io)))
+            length(xs) >= 3 || error("Malformed polar block: expected at least 3 columns for a 3-vector.")
+            return SVector{3,Float64}(parse.(Float64, xs[1:3]))
+        end
+
+        eps_col1 = _read_first3_svec3!(io)
+        eps_col2 = _read_first3_svec3!(io)
+        eps_col3 = _read_first3_svec3!(io)
+        eps = SMatrix{3,3,Float64,9}(hcat(eps_col1, eps_col2, eps_col3))
+
+        lambda = readline_skip_text!(io, Float64)
+
+        nx_Z = readline_skip_text!(io, Int)
+        x_Z = Vector{Float64}(undef, nx_Z)
+        for i in 1:nx_Z
+            # First token on each line is the value, trailing comments (if any) are ignored.
+            x_Z[i] = readline_skip_text!(io, Float64)
+        end
+
+        coeff_Z = zeros(Float64, na*9, nx_Z)
+        for i in 1:(na*9)
+            xs = split(strip(readline(io)))
+            length(xs) >= nx_Z || error("Malformed polar block: expected at least $nx_Z columns for coeff_Z row.")
+            coeff_Z[i, :] .= parse.(Float64, xs[1:nx_Z])
+        end
+
+        # Born effective charges: for each atom, 3×3 matrix written as 3 lines of 3 numbers
+        # (with a trailing comment on the first line).
+        born_Z = zeros(Float64, 3, 3, na)
+        for a1 in 1:na
+            for row in 1:3
+                xs = split(strip(readline(io)))
+                length(xs) >= 3 || error("Malformed polar block: expected at least 3 columns for Born effective charge row.")
+                vals = parse.(Float64, xs[1:3])
+                @inbounds born_Z[:, row, a1] .= vals
+            end
+        end
+
+        polar = PolarIFC2(
+            polar_flag,
+            eps,
+            lambda,
+            nx_Z,
+            x_Z,
+            coeff_Z,
+            born_Z,
+        )
+
+        IFC2(na, max_rcut + lo_sqtol, data, true, polar)
     end
 end
 
 """
-    read_ifc3(ifc3_path, ucposcar_path) -> IFCs{3,T}
-    read_ifc3(path, r_frac_uc, L_uc) -> IFCs{3,T}
+    read_ifc3(ifc3_path, ucposcar_path) -> IFC3
+    read_ifc3(path, r_frac_uc, L_uc) -> IFC3
 
 Read a 3rd-order `outfile.forceconstant_thirdorder` (TDEP-style).
 
@@ -102,7 +172,7 @@ Inputs
 - `L_uc::AbstractMatrix{T}`: 3×3 lattice with **columns as lattice vectors** so `cart = A * frac`
 
 Returns
-- `IFCs{3,T}` with `na_uc`, `r_cut`, and `atoms::Vector{AtomFC3{T,N}}`
+- `IFC3` with `na_uc`, `r_cut`, and `atoms::Vector{Vector{FC3Data}}`
 """
 function read_ifc3(ifc3_path::AbstractString, ucposcar_path::AbstractString)
     _, x_frac, L_uc = read_poscar_data(ucposcar_path)
@@ -197,8 +267,8 @@ function read_ifc3(
 end
 
 """
-    read_ifc4(ifc4_path, ucposcar_path) -> IFCs{4,T}
-    read_ifc4(path, r_frac_uc, A) -> IFCs{4,T}
+    read_ifc4(ifc4_path, ucposcar_path) -> IFC4
+    read_ifc4(path, r_frac_uc, L_uc) -> IFC4
 
 Read a 4th-order TDEP-style force constant file.
 
@@ -208,7 +278,7 @@ Inputs
 - `L_uc::AbstractMatrix{T}` (3×3): lattice with **columns** as lattice vectors ⇒ `cart = A * frac`
 
 Returns
-- `IFCs{4,T}` with `na_uc`, `r_cut`, and `atoms::Vector{AtomFC4{T,N}}`
+- `IFC4` with `na_uc`, `r_cut`, and `atoms::Vector{Vector{FC4Data}}`
 """
 function read_ifc4(ifc4_path::AbstractString, ucposcar_path::AbstractString)
     _, x_frac, L_uc = read_poscar_data(ucposcar_path)
@@ -306,140 +376,4 @@ function read_ifc4(path::AbstractString,
         end
         IFC4(na, sqrt(max_rc_sq) + lo_sqtol, data)
     end
-end
-
-
-"""
-    read_positions(path::String, na::Int, n_timesteps::Int) -> Matrix{Float64}
-
-Read TDEP-format positions file (fractional coordinates, 3 columns, all timesteps concatenated).
-
-Returns Cartesian positions in **bohr** as a Matrix of size `(3, na * n_timesteps)`.
-Requires `crystal` to convert fractional → Cartesian.
-"""
-function read_positions(path::String, crystal::CrystalStructure, n_timesteps::Int)
-    na = length(crystal)
-    n_total = na * n_timesteps
-    
-    positions = Matrix{Float64}(undef, 3, n_total)
-    
-    open(path, "r") do io
-        for i in 1:n_total
-            line = readline(io)
-            frac = parse.(Float64, split(strip(line)))
-            # Convert fractional to Cartesian (in bohr, since crystal.L is in bohr)
-            positions[:, i] = crystal.L * SVector{3,Float64}(frac)
-        end
-    end
-    
-    return positions
-end
-
-"""
-    read_forces(path::String, na::Int, n_timesteps::Int) -> Matrix{Float64}
-
-Read TDEP-format forces file (3 columns in eV/Å, all timesteps concatenated).
-
-Returns forces in **Hartree/bohr** as a Matrix of size `(3, na * n_timesteps)`.
-"""
-function read_forces(path::String, na::Int, n_timesteps::Int)
-    n_total = na * n_timesteps
-    
-    # Conversion: eV/Å → Hartree/bohr
-    conv = eV_to_Hartree / A_to_bohr
-    
-    forces = Matrix{Float64}(undef, 3, n_total)
-    
-    open(path, "r") do io
-        for i in 1:n_total
-            line = readline(io)
-            f_eVA = parse.(Float64, split(strip(line)))
-            forces[:, i] = conv .* f_eVA
-        end
-    end
-    
-    return forces
-end
-
-"""
-    write_ifc2(path::String, ifc2::AmorphousIFC2; compress::Int=5)
-
-Save AmorphousIFC2 to an HDF5 file. Stores the dense 3N×3N force constant matrix
-with deflate compression to efficiently handle sparsity.
-
-# Arguments
-- `path`: Output HDF5 file path
-- `ifc2`: AmorphousIFC2 to save
-- `compress`: Compression level 0-9 (0=none, 9=max, default=5)
-
-# Stored datasets (in eV/Å units for consistency with TDEP)
-- `ifc2`: 3N×3N dense matrix (eV/Å²)
-- `na`: Number of atoms
-- `r_cut`: Cutoff radius (Å)
-"""
-function write_ifc2(path::String, ifc2::AmorphousIFC2; compress::Int=5)
-    # Convert from internal units (Hartree/bohr²) to eV/Å²
-    Φ = Matrix(ifc2) .* forceconstant_2nd_HartreeBohr_to_eVA
-    
-    h5open(path, "w") do f
-        # Chunked + compressed dataset for the force constant matrix
-        # Chunk size chosen for good compression of sparse-ish matrices
-        n = size(Φ, 1)
-        chunk_size = min(n, 256)  # reasonable chunk for most systems
-        
-        d = create_dataset(f, "ifc2", Float64, (n, n);
-                          chunk=(chunk_size, chunk_size),
-                          compress=compress)
-        d[:, :] = Φ
-        
-        # Metadata (convert r_cut from bohr to Å)
-        f["na"] = ifc2.na
-        f["r_cut"] = ifc2.r_cut * bohr_to_A
-        
-        # Store units as attributes for clarity
-        attrs(f)["units_ifc2"] = "eV/Ang^2"
-        attrs(f)["units_r_cut"] = "Ang"
-    end
-    
-    return nothing
-end
-
-"""
-    read_ifc2_matrix(path::String) -> DenseIFC2
-
-Read a dense force constant matrix from an HDF5 file saved by `write_ifc2`.
-
-File is stored in eV/Å² units; returned DenseIFC2 is in internal units (Hartree/bohr²).
-
-# Returns
-- `DenseIFC2` containing the 3N×3N force constant matrix (Hartree/bohr²), na, and r_cut (bohr)
-"""
-function read_ifc2_matrix(path::String)
-    h5open(path, "r") do f
-        # Read and convert from eV/Å² to Hartree/bohr²
-        Φ = read(f["ifc2"]) .* forceconstant_2nd_eVA_to_HartreeBohr
-        na = read(f["na"])
-        # Convert r_cut from Å to bohr
-        r_cut = read(f["r_cut"]) * A_to_bohr
-        return DenseIFC2(Φ, na, r_cut)
-    end
-end
-
-"""
-    read_ifc2(path::String, ::Type{AmorphousIFC2}; tol=1e-14) -> AmorphousIFC2
-
-Read an HDF5 force constant file and return as sparse AmorphousIFC2 format.
-
-# Arguments
-- `path`: HDF5 file path (saved by `write_ifc2`)
-- `tol`: Threshold for non-zero blocks (default 1e-14)
-
-# Example
-```julia
-ifc2 = read_ifc2("forceconstants.h5", AmorphousIFC2)
-```
-"""
-function read_ifc2(path::String, ::Type{AmorphousIFC2}; tol::Float64=1e-13)
-    dense = read_ifc2_matrix(path)
-    return AmorphousIFC2(dense; tol=tol)
 end

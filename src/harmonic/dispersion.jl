@@ -24,6 +24,7 @@ function DispersionDataSimple(
     # just allocate it all, not that much RAM
     freq_buf = zeros(SVector{nb, Float64}, Nk)
     vel_buf = zeros(SMatrix{3, nb, Float64}, Nk)
+    ewald = precompute_ewald_parameters(ifc2, uc)
 
     # Get freqs at every q-point in IBZ
     @tasks for i in 1:Nk
@@ -39,7 +40,7 @@ function DispersionDataSimple(
         fill!(∂D∂q, zero(ComplexF64))
 
         q_frac  = ibz.k_ibz[i]
-        dynmat_and_derivative_q!(Dq, ∂D∂q, ifc2, uc, q_frac)
+        dynmat_and_derivative_q!(Dq, ∂D∂q, ifc2, uc, q_frac; ewald=ewald)
         freqs_sq, phi = get_modes(Hermitian(Dq), Val{is_gamma(q_frac)}())
         freqs_sq_real = clean_eigenvalue.(freqs_sq)
         freqs = SVector{nb, Float64}(negsqrt.(freqs_sq_real))
@@ -92,6 +93,7 @@ function PhononDispersions(
     nb = 3 * na
     n_irr = n_irr_point(fft_mesh)
     n_full = n_full_q_point(fft_mesh)
+    ewald = precompute_ewald_parameters(ifc2, uc)
     
     # Allocate arrays for irreducible points
     iq = Vector{PhononDispersionPoint{nb}}(undef, n_irr)
@@ -110,7 +112,7 @@ function PhononDispersions(
         fill!(∂D∂q, zero(ComplexF64))
         
         q_frac = fft_mesh.k_ibz[i]
-        dynmat_and_derivative_q!(Dq, ∂D∂q, ifc2, uc, q_frac)
+        dynmat_and_derivative_q!(Dq, ∂D∂q, ifc2, uc, q_frac; ewald=ewald)
         freqs_sq, phi = get_modes(Hermitian(Dq), Val{is_gamma(q_frac)}())
         freqs_sq_real = clean_eigenvalue.(freqs_sq)
         freqs = negsqrt.(freqs_sq_real)
@@ -146,7 +148,7 @@ function PhononDispersions(
         fill!(∂D∂q, zero(ComplexF64))
         
         q_frac = fft_mesh.k_full[i].r
-        dynmat_and_derivative_q!(Dq, ∂D∂q, ifc2, uc, q_frac)
+        dynmat_and_derivative_q!(Dq, ∂D∂q, ifc2, uc, q_frac; ewald=ewald)
         freqs_sq, phi = get_modes(Hermitian(Dq), Val{is_gamma(q_frac)}())
         freqs_sq_real = clean_eigenvalue.(freqs_sq)
         freqs = negsqrt.(freqs_sq_real)

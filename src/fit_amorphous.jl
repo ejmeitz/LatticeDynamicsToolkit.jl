@@ -463,47 +463,19 @@ function fit_ifc2(
     verbose::Bool = true,
     verbosity::Int = KrylovKit.STARTSTOP_LEVEL
 )
-    na = length(crystal)
-    n_samples = size(positions, 2) ÷ na
-    @assert size(positions) == (3, na * n_samples) "positions must be (3, na*n_samples)"
-    @assert size(forces)    == (3, na * n_samples) "forces must be (3, na*n_samples)"
-
-    Aop = make_ifc2_aug_operator(crystal, positions; r_cut=r_cut, μ=μ)
-
-    F = vec(forces)
-    b = zeros(Float64, Aop.n_equations + Aop.n_constraints)
-    @inbounds b[1:Aop.n_equations] .= F
-
-    verbose && @info "Fitting IFC2 with LSMR (matrix-free) + onsite-sum symmetry penalty" n_atoms=na n_samples=n_samples n_pairs=Aop.n_pairs n_unknowns=Aop.n_unknowns n_equations=Aop.n_equations n_constraints=Aop.n_constraints λ=λ μ=μ rtol=rtol
-
-    φ, info = lssolve(Aop, b, λ; rtol=rtol, atol=atol, maxiter=maxiter, verbosity=verbosity)
-
-    verbose && @info "LSMR done" converged=info.converged numiter=info.numiter numops=info.numops normres=info.normres
-
-    # Fit quality on force equations only
-    yfit = zeros(Float64, Aop.n_equations + Aop.n_constraints)
-    mul!(yfit, Aop, φ)
-    r_force = @views yfit[1:Aop.n_equations] .- F
-    rmse = sqrt(mean(r_force .^ 2))
-    max_err = maximum(abs.(r_force))
-    verbose && @info "Fit quality (forces)" rmse=rmse max_error=max_err
-
-    # Unpack φ into SMatrix blocks
-    neighbors = Aop.neighbors
-    pair_to_col = Aop.pair_to_col
-    blocks = Vector{Vector{SMatrix{3,3,Float64,9}}}(undef, na)
-    @inbounds for i in 1:na
-        n_nbrs = length(neighbors[i])
-        blocks[i] = Vector{SMatrix{3,3,Float64,9}}(undef, n_nbrs)
-        for k in 1:n_nbrs
-            col0 = pair_to_col[i][k]
-            blocks[i][k] = SMatrix{3,3,Float64,9}(φ[col0:col0+8])
-        end
-    end
-
-    # Diagnostic: antisymmetry of onsite ASR sum (this is exactly what μ penalizes)
-    mean_abs, max_abs = onsite_antisymmetry_stats(na, neighbors, blocks)
-    verbose && @info "Onsite-sum antisymmetry (ASR diagonal symmetry diagnostic)" mean_abs=mean_abs max_abs=max_abs
-
-    return AmorphousIFC2(na, r_cut, neighbors, blocks), info
+    verbose && @info "Fitting IFC2 with SparseCPU + LSMR" regularization=λ constraint_weight=μ rtol=rtol maxiter=maxiter
+    problem = AmorphousFitProblem(crystal, positions, forces, r_cut)
+    options = AmorphousFitOptions(
+        storage=SparseCPU(),
+        constraints=ApproximateConstraints(weight=μ),
+        initial_guess=ZeroInitialGuess(),
+        formulation=LeastSquaresFormulation(),
+        algorithm=LSMRAlgorithm(),
+        regularization=λ,
+        maxiter=maxiter,
+        rtol=rtol,
+        atol=atol,
+        verbosity=verbosity,
+    )
+    return fit_ifc2_stage(problem, options)
 end

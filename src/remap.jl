@@ -27,7 +27,7 @@ function remap_checks(
     n_uc_ifc = [ifc.na for ifc in ifcs]
 
     if !allequal(n_uc_ifc)
-        throw(ArgumentError("You passed ifcs_old built from different size unitcells $(n_uc_ifc)."))
+        throw(ArgumentError("You passed ifcs built from different size unitcells $(n_uc_ifc)."))
     end
     if !all(n_uc .== n_uc_ifc)
         throw(ArgumentError("Your force constants are calcualted on a cell with $(n_uc_ifc) atoms, but you passed a cell with $(n_uc) atoms."))
@@ -76,7 +76,7 @@ function remap(
                 end
             end
             
-            if i2 == 0
+            if i2 == -1
                 error("Failed mapping second-order IFCs for atom $a1 (pair $i): no match for target position.")
             end
 
@@ -100,7 +100,42 @@ function remap(
         data[a1] = pair_data
     end
 
-    return IFC2(na_sc, fc.r_cut, data)   # or IFCs{2,T}(na_sc, fc.r_cut, data) if you store the cutoff in fc
+    # Remap polar information in the same spirit as TDEP, if present.
+    has_polar = fc.has_polar_data
+    polar_sc = PolarIFC2(na_sc)
+
+    if has_polar
+        src = fc.polar
+
+        # Allocate containers sized for the supercell.
+        coeff_Z_sc = zeros(Float64, na_sc * 9, src.nx_Z)
+        born_Z_sc  = zeros(Float64, 3, 3, na_sc)
+
+        # Copy Born effective charges and coeff_Z rows according to the unitcell mapping.
+        @inbounds for a1 in 1:na_sc
+            uca = s2u[a1]
+
+            # Born effective charges: 3×3 per atom
+            born_Z_sc[:, :, a1] .= src.born_Z[:, :, uca]
+
+            # coeff_Z is stored as (na*9, nx_Z): 9 rows per atom.
+            r_src = 9 * (uca - 1) + 1 : 9 * uca
+            r_sc  = 9 * (a1 - 1) + 1 : 9 * a1
+            coeff_Z_sc[r_sc, :] .= src.coeff_Z[r_src, :]
+        end
+
+        polar_sc = PolarIFC2(
+            src.correction_type,
+            src.eps,
+            src.lambda,
+            src.nx_Z,
+            copy(src.x_Z),
+            coeff_Z_sc,
+            born_Z_sc,
+        )
+    end
+
+    return IFC2(na_sc, fc.r_cut, data, has_polar, polar_sc)
 end
 
 
@@ -328,7 +363,7 @@ function map_super_to_unitcell(
         end
 
         if !(best_i != 0 && best_d_sq ≤ tol_sq)
-            throw(error("No unit-cell match within tol for supercell atom $j (best_d=$(sqrt(best_d)) Å)"))
+            throw(error("No unit-cell match within tol for supercell atom $j (best_d=$(sqrt(best_d_sq)) Å)"))
         end
         
         s2u[j] = best_i
