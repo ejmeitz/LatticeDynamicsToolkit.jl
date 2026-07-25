@@ -46,18 +46,37 @@ function _mode_weight(::QuantumConfigSettings, n_i::Float64)
 end
 _mode_weight(::ClassicalConfigSettings, ::Float64) = 1.0
 
-# Precompute c_i = w_i * (1/2) * m_i * ω_i² * σ_i²
+# Explicit ∂g/∂T factor: (x/T) tanh(x/2), with g = sech²(x/2).
+# Classical g ≡ 1 ⇒ derivative vanishes.
+function _mode_weight_dT(::ClassicalConfigSettings, ::Float64, ::Float64)
+    return 0.0
+end
+function _mode_weight_dT(::QuantumConfigSettings, T::Float64, ω::Float64)
+    if T < LatticeDynamicsToolkit.lo_temperaturetol
+        return 0.0
+    end
+    x = ω / (LatticeDynamicsToolkit.kB_Hartree * T)
+    if x > 1e2
+        return 0.0
+    end
+    return (x / T) * tanh(x / 2)
+end
+
+# Precompute c_i = w_i * (1/2) * m_i * ω_i² * σ_i² and ∂c_i/∂T (explicit g(T) only).
 # Mass factor needed for proper energy units (Hartree)
 function _v2_tilde_coefficients(CS::ConfigSettings, freqs_view, sigma_sq, masses)
     T = CS.temperature
     coeffs = zeros(length(freqs_view))
+    dcoeffs = zeros(length(freqs_view))
     for (i, (ω, σ², m)) in enumerate(zip(freqs_view, sigma_sq, masses))
-        coeffs[i] = _mode_weight(CS, LatticeDynamicsToolkit.planck(T, ω))
+        w = _mode_weight(CS, LatticeDynamicsToolkit.planck(T, ω))
         # the `mode_amplitude` function is mass normalized already
         # so we need to multiply by mass here to get correct units
-        coeffs[i] *= 0.5 * m * ω^2 * σ²
+        c = w * 0.5 * m * ω^2 * σ²
+        coeffs[i] = c
+        dcoeffs[i] = _mode_weight_dT(CS, T, ω) * c
     end
-    return coeffs
+    return coeffs, dcoeffs
 end
 
 # Assumes IFCs are supercell already
@@ -94,24 +113,26 @@ function _make_energy_dataset(
     # Pre-scale modes by their amplitudes
     phi_A = phi_view_T .* mean_amplitude_matrix
 
-    # Compute V2_tilde coefficients (include mass for proper energy units)
+    # Compute V2_tilde and ∂V2_tilde/∂T coefficients (include mass for proper energy units)
     sigma_sq = mean_amplitude_matrix .^ 2
-    coeffs = _v2_tilde_coefficients(cc_settings, freqs_view, sigma_sq, atom_masses)
+    coeffs, dcoeffs = _v2_tilde_coefficients(cc_settings, freqs_view, sigma_sq, atom_masses)
 
-    # f(config, z) returns (energies, v2_tilde) - closure captures coeffs
+    # f(config, z) returns (energies, v2_tilde, dv2_tilde_dT) - closure captures coeffs
     # energies returns (e2, e3, e4, ep); TEP uses (e2+ep, e3, e4)
     verbose && @info "Preparing LAMMPS-backed energy evaluations" has_polar_term=(fcp !== nothing) n_configs=cc_settings.n_configs
     f = (config, z) -> begin
         e2, e3, e4, ep = energies(config, ifc2; fc3=ifc3, fc4=ifc4, fcp=fcp, n_threads=1)
         tep = SVector{4,Float64}(e2, e3, e4, ep)
         v2t = sum(coeffs[i] * z[i]^2 for i in eachindex(z))
-        return (tep, v2t)
+        dv2t = sum(dcoeffs[i] * z[i]^2 for i in eachindex(z))
+        return (tep, v2t, dv2t)
     end
 
     # Storage arrays
     tep_energies = zeros(SVector{4, Float64}, cc_settings.n_configs)
     V = zeros(Float64, cc_settings.n_configs)
     V2_tilde = zeros(Float64, cc_settings.n_configs)
+    dV2_tilde_dT = zeros(Float64, cc_settings.n_configs)
 
     # LAMMPSCalculator only supports metal units
     x_cart_eq_ang = copy(sc.x_cart) .* bohr_to_A
@@ -146,7 +167,7 @@ function _make_energy_dataset(
         # Evaluate user function with config AND z values
         coord_storage .= vec(sum(tmp, dims=1))
         cs = reinterpret(SVector{D, Float64}, coord_storage)
-        tep_energies[n], V2_tilde[n] = f(cs, randn_storage)
+        tep_energies[n], V2_tilde[n], dV2_tilde_dT[n] = f(cs, randn_storage)
 
         # Calculate energy with provided calculator
         # all LAMMPSCalculators use metal units
@@ -159,5 +180,5 @@ function _make_energy_dataset(
     end
     verbose && finish!(p)
 
-    return Hartree_to_eV .* tep_energies, V, Hartree_to_eV .* V2_tilde
+    return Hartree_to_eV .* tep_energies, V, Hartree_to_eV .* V2_tilde, Hartree_to_eV .* dV2_tilde_dT
 end
